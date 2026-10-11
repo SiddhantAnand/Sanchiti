@@ -12,6 +12,10 @@ updates:
   - package-ecosystem: docker
     directories: [/backend, /web]
     schedule: { interval: weekly }
+    # Base images stay on the LTS lines (Java 21, Node 22); move those deliberately.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }

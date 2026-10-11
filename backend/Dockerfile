@@ -7,7 +7,7 @@ COPY src src
 # Tests need a Postgres instance; they run on the host with ./mvnw test.
 RUN mvn -q -B package -DskipTests && cp target/sanchiti-*.jar /src/app.jar
 
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 RUN addgroup -S app && adduser -S app -G app
 WORKDIR /app
 COPY --from=build /src/app.jar app.jar

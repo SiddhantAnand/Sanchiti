@@ -1,0 +1,8 @@
+.env
+.env.*
+target/
+.mvn/
+mvnw
+mvnw.cmd
+Dockerfile
+.dockerignore

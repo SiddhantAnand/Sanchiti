@@ -1,0 +1,48 @@
+# Whole stack on one machine: `docker compose up -d --build`, then open http://localhost:8787
+# Settings come from backend/.env (see backend/.env.example). Only the web container is published.
+name: sanchiti
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sanchiti
+      POSTGRES_USER: sanchiti
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sanchiti}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sanchiti -d sanchiti"]
+      interval: 5s
+      retries: 20
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - path: backend/.env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8787
+      DB_URL: jdbc:postgresql://db:5432/sanchiti
+      DB_USER: sanchiti
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-sanchiti}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./web
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:8787
+    ports:
+      - "${WEB_PORT:-8787}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  db-data:

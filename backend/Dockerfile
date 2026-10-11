@@ -1,5 +1,5 @@
 # Sanchiti API (Spring Boot). Needs Postgres: set DB_URL / DB_USER / DB_PASSWORD (see .env.example).
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.9-eclipse-temurin-26 AS build
 WORKDIR /src
 COPY pom.xml .
 RUN mvn -q -B dependency:go-offline

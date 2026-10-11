@@ -1,5 +1,5 @@
 # Sanchiti web UI: static files on nginx, which also forwards /api to the backend (same origin for the cookie).
-FROM node:22-slim AS build
+FROM node:25-slim AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund

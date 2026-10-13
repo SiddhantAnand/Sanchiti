@@ -1,17 +1,45 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Download, HardDriveDownload, KeyRound, Link, LoaderCircle, Lock, Sparkles, UserPlus, Users } from 'lucide-react';
+import { Check, Download, HardDriveDownload, KeyRound, Link, LoaderCircle, Lock, Palette, Sparkles, UserPlus, Users } from 'lucide-react';
 import { api, type AiStatus, type Me, type UserRow } from '../api';
 import { CopyField, useToast } from '../ui';
+import { THEMES, applyTheme, savedTheme } from '../theme';
 
 export function Settings({ me, onAiChanged }: { me: Me; onAiChanged: (enabled: boolean) => void }) {
   return (
     <div className="stack">
+      <Appearance />
       <div className="grid row-1-1">
         <Password />
         <Backup />
       </div>
       {me.admin && <Gemini onAiChanged={onAiChanged} />}
       {me.admin && <People />}
+    </div>
+  );
+}
+
+function Appearance() {
+  const [theme, setTheme] = useState(savedTheme);
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h3 className="card-title"><Palette size={16} /> Appearance</h3>
+          <div className="card-sub">Saved on this device</div>
+        </div>
+      </div>
+      <div className="theme-grid">
+        {THEMES.map((t) => (
+          <button key={t.id} type="button" className={`theme-opt${theme === t.id ? ' on' : ''}`}
+            onClick={() => (applyTheme(t.id), setTheme(t.id))} aria-pressed={theme === t.id}>
+            <span className="theme-swatch">{t.swatch.map((c) => <i key={c} style={{ background: c }} />)}</span>
+            <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 700 }}>
+              {t.name} {theme === t.id && <Check size={15} style={{ color: 'var(--primary)' }} />}
+            </span>
+            <span className="faint" style={{ fontSize: 12 }}>{t.desc}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

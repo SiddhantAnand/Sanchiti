@@ -7,7 +7,7 @@ import { Empty, Skeleton } from '../ui';
 type BankRow = Summary['deductedByBank'][number];
 
 export const KINDS = [
-  { key: 'spent', label: 'Spending', color: '#8B7BFF' },
+  { key: 'spent', label: 'Spending', color: 'var(--primary)' },
   { key: 'invested', label: 'Investments', color: '#34D399' },
   { key: 'ownTransfers', label: 'Own accounts & card bills', color: '#60A5FA' },
 ] as const;

@@ -146,13 +146,13 @@ export function Transactions(props: {
                       className="chip-select"
                       aria-label="Category"
                       value={t.category ?? ''}
-                      style={{ background: `${color}1F`, color: t.category ? color : 'var(--text-2)' }}
+                      style={{ background: `${color}1F`, color: t.category ? `color-mix(in srgb, ${color} var(--chip-ink), var(--text))` : 'var(--text-2)' }}
                       onChange={(e) => changeCategory(t, e.target.value)}
                     >
                       <option value="">{props.aiEnabled ? '✦ Let Gemini decide' : UNCATEGORIZED}</option>
                       {props.categories.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
-                    {t.categorySource === 'ai' && <Sparkles size={12} style={{ color: '#b9a8ff', flex: 'none' }} aria-label="Categorised by Gemini" />}
+                    {t.categorySource === 'ai' && <Sparkles size={12} style={{ color: 'var(--gemini-text)', flex: 'none' }} aria-label="Categorised by Gemini" />}
                   </div>
                   <div className="cell-muted col-method">{methodLabel(t.paymentMethod, t.cardLast4) ?? '—'}</div>
                   <div className="cell-muted col-bank">{t.bank ?? '—'}</div>

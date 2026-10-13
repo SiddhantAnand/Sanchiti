@@ -8,8 +8,8 @@ import { CategoryIcon, categoryMeta } from '../categories';
 import { methodLabel, money, moneyCompact, moneyWhole, rangeLabel, shortDate, type Period } from '../format';
 import { Delta, Empty, Skeleton } from '../ui';
 
-const METHOD_COLORS: Record<string, string> = { UPI: '#8B7BFF', CARD: '#2DD4BF', AUTOPAY: '#F5B544', NETBANKING: '#4FB3FF', CASH: '#7BD389' };
-const BANK_COLORS = ['#8B7BFF', '#2DD4BF', '#F5B544', '#4FB3FF', '#FF8A5B'];
+const METHOD_COLORS: Record<string, string> = { UPI: 'var(--primary)', CARD: '#2DD4BF', AUTOPAY: '#F5B544', NETBANKING: '#4FB3FF', CASH: '#7BD389' };
+const BANK_COLORS = ['var(--primary)', '#2DD4BF', '#F5B544', '#4FB3FF', '#FF8A5B'];
 
 type TipProps = { active?: boolean; payload?: readonly { value?: unknown; payload?: Record<string, unknown> }[] };
 
@@ -19,7 +19,7 @@ function TrendTip({ active, payload }: TipProps) {
   return (
     <div className="chart-tip">
       <div className="t">{shortDate(p.date)}</div>
-      <div className="r"><span><span className="dot" style={{ background: '#8B7BFF', display: 'inline-block', marginRight: 6 }} />Spent</span><b className="num">{money(p.total)}</b></div>
+      <div className="r"><span><span className="dot" style={{ background: 'var(--primary)', display: 'inline-block', marginRight: 6 }} />Spent</span><b className="num">{money(p.total)}</b></div>
       {p.prevDate && (
         <div className="r faint" style={{ marginTop: 4 }}><span>{shortDate(p.prevDate)}</span><span className="num">{money(p.prev ?? 0)}</span></div>
       )}
@@ -128,8 +128,8 @@ export function Overview(props: {
               <div className="card-sub">{rangeLabel(cur.from, cur.to)}</div>
             </div>
             <div className="legend">
-              <span><i style={{ background: '#8B7BFF' }} />This period</span>
-              <span><i style={{ background: '#4B5574' }} />Previous</span>
+              <span><i style={{ background: 'var(--primary)' }} />This period</span>
+              <span><i style={{ background: 'var(--text-3)' }} />Previous</span>
             </div>
           </div>
           <div className="chart">
@@ -137,17 +137,17 @@ export function Overview(props: {
               <AreaChart data={trend} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
                 <defs>
                   <linearGradient id="spend" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#8B7BFF" stopOpacity={0.45} />
-                    <stop offset="100%" stopColor="#8B7BFF" stopOpacity={0} />
+                    <stop offset="0%" stopColor="var(--primary)" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="var(--primary)" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid stroke="rgba(148,163,209,0.08)" vertical={false} />
-                <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: '#6c7493', fontSize: 11.5 }} axisLine={false} tickLine={false} minTickGap={24} />
-                <YAxis tickFormatter={moneyCompact} tick={{ fill: '#6c7493', fontSize: 11.5 }} axisLine={false} tickLine={false} width={58} />
+                <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: 'var(--text-3)', fontSize: 11.5 }} axisLine={false} tickLine={false} minTickGap={24} />
+                <YAxis tickFormatter={moneyCompact} tick={{ fill: 'var(--text-3)', fontSize: 11.5 }} axisLine={false} tickLine={false} width={58} />
                 <Tooltip content={<TrendTip />} cursor={{ stroke: 'rgba(139,123,255,.4)', strokeDasharray: '4 4' }} />
-                <Line type="monotone" dataKey="prev" stroke="#4B5574" strokeWidth={1.5} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
-                <Area type="monotone" dataKey="total" stroke="#8B7BFF" strokeWidth={2.5} fill="url(#spend)"
-                  activeDot={{ r: 5, fill: '#8B7BFF', stroke: '#0a0e1a', strokeWidth: 2 }} />
+                <Line type="monotone" dataKey="prev" stroke="var(--text-3)" strokeWidth={1.5} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
+                <Area type="monotone" dataKey="total" stroke="var(--primary)" strokeWidth={2.5} fill="url(#spend)"
+                  activeDot={{ r: 5, fill: 'var(--primary)', stroke: 'var(--surface)', strokeWidth: 2 }} />
               </AreaChart>
             </ResponsiveContainer>
           </div>

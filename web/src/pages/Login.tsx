@@ -62,11 +62,11 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
               <svg viewBox="0 0 240 54" width="100%" height="54">
                 <defs>
                   <linearGradient id="hero-g" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0" stopColor="#8B7BFF" stopOpacity=".5" /><stop offset="1" stopColor="#8B7BFF" stopOpacity="0" />
+                    <stop offset="0" stopColor="var(--primary)" stopOpacity=".5" /><stop offset="1" stopColor="var(--primary)" stopOpacity="0" />
                   </linearGradient>
                 </defs>
                 <path d="M0 40 C20 34 30 44 50 30 S80 12 100 26 S140 44 160 22 S200 8 240 16 V54 H0Z" fill="url(#hero-g)" />
-                <path d="M0 40 C20 34 30 44 50 30 S80 12 100 26 S140 44 160 22 S200 8 240 16" fill="none" stroke="#8B7BFF" strokeWidth="2.5" />
+                <path d="M0 40 C20 34 30 44 50 30 S80 12 100 26 S140 44 160 22 S200 8 240 16" fill="none" stroke="var(--primary)" strokeWidth="2.5" />
               </svg>
             </div>
             <div className="float-card float-b">

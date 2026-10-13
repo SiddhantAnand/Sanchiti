@@ -40,7 +40,7 @@ export function CategoryIcon({ category, size = 36 }: { category: string | null;
   return (
     <span
       className="cat-icon"
-      style={{ width: size, height: size, color, background: `${color}1F`, boxShadow: `inset 0 0 0 1px ${color}33` }}
+      style={{ width: size, height: size, color: `color-mix(in srgb, ${color} var(--chip-ink), var(--text))`, background: `${color}1F`, boxShadow: `inset 0 0 0 1px ${color}33` }}
     >
       <Icon size={Math.round(size * 0.47)} strokeWidth={2} />
     </span>

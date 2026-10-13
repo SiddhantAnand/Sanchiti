@@ -1,8 +1,11 @@
+export type Direction = 'debit' | 'credit';
+
 export type Transaction = {
   id: string;
   date: string;
   amount: number;
   currency: string;
+  direction: Direction;
   reason: string;
   merchant: string | null;
   paymentMethod: string | null;
@@ -10,7 +13,7 @@ export type Transaction = {
   cardLast4: string | null;
   bank: string | null;
   category: string | null;
-  categorySource: 'ai' | 'manual' | null;
+  categorySource: 'ai' | 'manual' | 'rule' | null;
   note: string | null;
   createdAt: string;
 };
@@ -28,12 +31,19 @@ export type Summary = {
   investedCount: number;
   ownTransfers: number;
   ownTransferCount: number;
+  received: number;
+  receivedCount: number;
+  ownTransfersIn: number;
+  net: number;
   byCategory: { category: string; total: number; count: number; sharePct: number }[];
+  receivedByCategory: { category: string; total: number; count: number; sharePct: number }[];
   byBank: { bank: string; total: number; count: number }[];
   deductedByBank: { bank: string; total: number; count: number; spent: number; invested: number; ownTransfers: number }[];
+  creditedByBank: { bank: string; total: number; count: number; received: number; ownTransfers: number }[];
   byPaymentMethod: { method: string; total: number; count: number }[];
   daily: { date: string; total: number }[];
   largest: { date: string; amount: number; payee: string; category: string | null }[];
+  largestReceived: { date: string; amount: number; payee: string; category: string | null }[];
   frequentPayees: { payee: string; count: number; total: number }[];
   uncategorizedCount: number;
   otherCurrencies: { currency: string; total: number; count: number }[];
@@ -92,6 +102,7 @@ export type TransactionFields = {
   cardLast4: string | null;
   upiRef: string | null;
   note: string | null;
+  direction: Direction;
 };
 
 export class ApiError extends Error {
@@ -147,11 +158,13 @@ export const api = {
   saveAi: (apiKey: string, model: string) => request<AiStatus>('PUT', '/api/account/ai', { apiKey, model }),
   clearAi: () => request<AiStatus>('DELETE', '/api/account/ai'),
   health: () => request<{ ok: boolean; ai: boolean }>('GET', '/health'),
-  categories: () => request<{ categories: string[] }>('GET', '/api/categories'),
+  categories: () => request<{ categories: string[]; creditCategories: string[] }>('GET', '/api/categories'),
   banks: () => request<{ banks: string[] }>('GET', '/api/banks'),
   summary: (from: string, to: string) => request<Summary>('GET', `/api/summary${qs({ from, to })}`),
+  span: () => request<{ first: string | null; last: string | null }>('GET', '/api/transactions/span'),
   transactions: (p: {
-    from?: string; to?: string; category?: string; q?: string; bank?: string; kind?: string; limit?: number; offset?: number;
+    from?: string; to?: string; category?: string; q?: string; bank?: string; kind?: string; direction?: Direction;
+    limit?: number; offset?: number;
   }) => request<Page>('GET', `/api/transactions${qs(p)}`),
   createTransaction: (fields: TransactionFields, allowDuplicates = false) =>
     request<IngestResponse>('POST', `/api/transactions${qs({ allowDuplicates: String(allowDuplicates) })}`, fields),

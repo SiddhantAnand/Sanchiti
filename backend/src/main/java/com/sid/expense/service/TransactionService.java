@@ -44,6 +44,8 @@ public class TransactionService {
   private final ReviewRepository reviews;
   private final Banks banks;
 
+  private static final String CREDIT_KEY = "in:";
+
   public TransactionService(TransactionRepository repo, ReviewRepository reviews, AppProperties props) {
     this.repo = repo;
     this.reviews = reviews;
@@ -71,9 +73,11 @@ public class TransactionService {
     String method = t.paymentMethod() != null ? t.paymentMethod() : n.method();
     if (method == null && cardLast4 != null) method = "CARD";
     if (method == null && upiRef != null) method = "UPI";
+    // Credits get their own merchant keys, so a person you pay and who pays you back keep separate categories.
+    String reasonKey = (t.isCredit() ? CREDIT_KEY : "")
+        + Texts.normalizeReason(n.merchant() != null ? n.merchant() : t.reason());
     return new Derived(
-        n.merchant(), Texts.normalizeReason(n.merchant() != null ? n.merchant() : t.reason()), upiRef, cardLast4,
-        method, t.bank() != null ? t.bank() : n.bank());
+        n.merchant(), reasonKey, upiRef, cardLast4, method, t.bank() != null ? t.bank() : n.bank());
   }
 
   @Transactional
@@ -92,11 +96,11 @@ public class TransactionService {
       String reasonKey = d.reasonKey();
       String upiRef = d.upiRef();
       // Senders reuse refs (mandate IDs, alerts), so a ref only identifies a payment together with date and amount.
-      String dedupeKey = upiRef != null
+      String dedupeKey = (t.isCredit() ? CREDIT_KEY : "") + (upiRef != null
           ? "upi:" + upiRef + "|" + t.date() + "|" + t.amountMinor()
           : sha256(t.date() + "|" + t.amountMinor() + "|" + t.currency() + "|" + t.reason().toLowerCase(Locale.ROOT)
               + (d.bank() != null ? "|" + d.bank().toLowerCase(Locale.ROOT) : "")
-              + (d.cardLast4() != null ? "|" + d.cardLast4() : ""));
+              + (d.cardLast4() != null ? "|" + d.cardLast4() : "")));
 
       if (!allowDuplicates
           && (repo.existsByDedupeKey(userId, dedupeKey) || isSamePaymentFromAnotherSource(userId, t, n, d))) {
@@ -107,27 +111,51 @@ public class TransactionService {
       Optional<KnownCategory> category = category(userId, userName, d, t);
       UUID id = UUID.randomUUID();
       repo.insert(new NewTransaction(
-          userId, id, t.date(), t.amountMinor(), t.currency(), t.reason(), reasonKey,
+          userId, id, t.date(), t.amountMinor(), t.currency(), t.direction().name(), t.reason(), reasonKey,
           d.merchant(), d.method(), upiRef, d.cardLast4(), d.bank(),
           category.map(KnownCategory::category).orElse(null), category.map(KnownCategory::source).orElse(null),
           dedupeKey, t.note()));
+      pairOwnTransfer(userId, id, t, d.bank(), category.map(KnownCategory::category).orElse(null),
+          category.map(KnownCategory::source).orElse(null));
       ids.add(id);
     }
     return new IngestResult(ids, duplicates);
   }
 
-  /** A hand-set category for the merchant wins, then the own-money rules, then what Gemini said before. */
+  /**
+   * A hand-set category for the merchant wins, then the own-money rules, then the sender's hint (credits), then what
+   * Gemini said before. Credits never wait for Gemini: anything unrecognised is plain Received.
+   */
   private Optional<KnownCategory> category(long userId, String userName, Derived d, TransactionInput t) {
-    Optional<KnownCategory> known = repo.knownCategory(userId, d.reasonKey());
+    Optional<KnownCategory> known = repo.knownCategory(userId, d.reasonKey())
+        .filter(k -> Category.fromLabel(k.category()).filter(c -> c.fits(t.direction())).isPresent());
     if (known.filter(k -> "manual".equals(k.source())).isPresent()) return known;
-    Optional<Category> rule = OwnMoney.categoryFor(d.merchant() != null ? d.merchant() : t.reason(), userName);
+    Optional<Category> rule = OwnMoney.categoryFor(d.merchant() != null ? d.merchant() : t.reason(), userName)
+        .filter(c -> c.fits(t.direction()));
     if (rule.isPresent()) return Optional.of(new KnownCategory(rule.get().label(), "rule"));
-    return known;
+    if (t.category() != null) return Optional.of(new KnownCategory(t.category().label(), "rule"));
+    if (known.isPresent() || !t.isCredit()) return known;
+    return Optional.of(new KnownCategory(Category.RECEIVED.label(), "rule"));
   }
 
   /**
-   * Saves a hand edit. A new merchant drops a non-manual category in favour of what is known for the new merchant
-   * (or nothing, so Gemini picks one).
+   * Money moved between the user's own accounts shows up twice: debited from one bank, credited to another. When one
+   * side is a Self Transfer, the other side becomes one too, so neither counts as spending or income.
+   */
+  private void pairOwnTransfer(
+      long userId, UUID id, TransactionInput t, String bank, String category, String source) {
+    var other = repo.ownTransferCounterpart(
+        userId, id, t.direction(), t.date(), t.amountMinor(), t.currency(), bank);
+    if (other.isEmpty()) return;
+    boolean self = Category.SELF_TRANSFER.label().equals(category);
+    boolean otherSelf = Category.SELF_TRANSFER.label().equals(other.get().category());
+    if (self && !otherSelf) repo.markSelfTransfer(userId, other.get().id());
+    else if (otherSelf && !self && !"manual".equals(source)) repo.markSelfTransfer(userId, id);
+  }
+
+  /**
+   * Saves a hand edit. A new merchant or a flipped direction drops a non-manual category in favour of what is known
+   * for the new merchant (or nothing, so Gemini picks one). A manual category that no longer fits the direction goes.
    */
   @Transactional
   public void edit(long userId, String userName, Transaction old, TransactionInput t) {
@@ -135,19 +163,29 @@ public class TransactionService {
     String category = old.category() == null ? null : old.category().label();
     String source = old.categorySource();
     boolean merchantChanged = !d.reasonKey().equals(repo.reasonKeyOf(userId, old.id()).orElse(null));
-    if (merchantChanged && !"manual".equals(source)) {
+    boolean fits = old.category() == null || old.category().fits(t.direction());
+    if ((merchantChanged && !"manual".equals(source)) || !fits) {
       Optional<KnownCategory> known = category(userId, userName, d, t);
       category = known.map(KnownCategory::category).orElse(null);
       source = known.map(KnownCategory::source).orElse(null);
     }
     repo.update(new EditedTransaction(
-        userId, old.id(), t.date(), t.amountMinor(), t.currency(), t.reason(), d.reasonKey(), d.merchant(),
-        d.method(), d.upiRef(), d.cardLast4(), d.bank(), category, source, t.note()));
+        userId, old.id(), t.date(), t.amountMinor(), t.currency(), t.direction().name(), t.reason(), d.reasonKey(),
+        d.merchant(), d.method(), d.upiRef(), d.cardLast4(), d.bank(), category, source, t.note()));
   }
 
+  /** Debits go back to Gemini; credits go back to their rule-based category. */
   @Transactional
-  public void clearCategory(long userId, UUID id) {
-    repo.reasonKeyOf(userId, id).ifPresent(key -> repo.clearCategory(userId, id, key));
+  public void clearCategory(long userId, String userName, Transaction tx) {
+    repo.reasonKeyOf(userId, tx.id()).ifPresent(key -> repo.clearCategory(userId, tx.id(), key));
+    if (!tx.isCredit()) return;
+    var input = new TransactionInput(tx.date(), tx.amountMinor(), tx.reason(), tx.currency(), tx.bank(),
+        tx.paymentMethod(), tx.cardLast4(), tx.upiRef(), tx.note(), tx.direction(), null);
+    Derived d = derive(input);
+    category(userId, userName, d, input).ifPresent(k -> repo.update(new EditedTransaction(
+        userId, tx.id(), tx.date(), tx.amountMinor(), tx.currency(), tx.direction().name(), tx.reason(),
+        d.reasonKey(), d.merchant(), d.method(), d.upiRef(), d.cardLast4(), d.bank(), k.category(), k.source(),
+        tx.note())));
   }
 
   /**
@@ -158,7 +196,7 @@ public class TransactionService {
   private boolean isSamePaymentFromAnotherSource(
       long userId, TransactionInput t, NarrationParser.Narration n, Derived d) {
     if (n.merchant() == null) return false;
-    return repo.sameDaySameAmount(userId, t.date(), t.amountMinor(), t.currency()).stream()
+    return repo.sameDaySameAmount(userId, t.direction(), t.date(), t.amountMinor(), t.currency()).stream()
         .filter(m -> d.upiRef() == null || m.upiRef() == null)
         .filter(m -> !conflicts(d.bank(), m.bank()) && !conflicts(d.cardLast4(), m.cardLast4()))
         .anyMatch(m -> Texts.sameMerchant(d.reasonKey(), m.reasonKey()));
@@ -168,10 +206,18 @@ public class TransactionService {
     return a != null && b != null && !a.equalsIgnoreCase(b);
   }
 
-  /** Manual override; also re-labels other non-manual transactions of the same merchant and remembers it. */
+  /**
+   * Manual override; also re-labels other non-manual transactions of the same merchant and remembers it. Marking one
+   * side of a move between own accounts as Self Transfer marks the other side too.
+   */
   @Transactional
-  public void setCategory(long userId, UUID id, Category category) {
-    repo.reasonKeyOf(userId, id).ifPresent(key -> repo.setManualCategory(userId, id, key, category.label()));
+  public void setCategory(long userId, Transaction tx, Category category) {
+    repo.reasonKeyOf(userId, tx.id()).ifPresent(key -> repo.setManualCategory(userId, tx.id(), key, category.label()));
+    if (category == Category.SELF_TRANSFER) {
+      repo.ownTransferCounterpart(
+              userId, tx.id(), tx.direction(), tx.date(), tx.amountMinor(), tx.currency(), tx.bank())
+          .ifPresent(other -> repo.markSelfTransfer(userId, other.id()));
+    }
   }
 
   @Transactional

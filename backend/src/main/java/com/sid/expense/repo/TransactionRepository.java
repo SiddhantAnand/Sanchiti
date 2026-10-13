@@ -2,6 +2,7 @@ package com.sid.expense.repo;
 
 import com.sid.expense.domain.Banks;
 import com.sid.expense.domain.Category;
+import com.sid.expense.domain.Direction;
 import com.sid.expense.domain.Transaction;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -23,7 +24,7 @@ import org.springframework.stereotype.Repository;
 public class TransactionRepository {
 
   private static final String COLUMNS = """
-      id, date, amount_minor, currency, reason, merchant, payment_method, upi_ref, card_last4, bank,
+      id, date, amount_minor, currency, direction, reason, merchant, payment_method, upi_ref, card_last4, bank,
       category, category_source, note, created_at""";
 
   private static final RowMapper<Transaction> MAPPER = (rs, i) -> new Transaction(
@@ -31,6 +32,7 @@ public class TransactionRepository {
       rs.getObject("date", LocalDate.class),
       rs.getLong("amount_minor") / 100.0,
       rs.getString("currency"),
+      Direction.valueOf(rs.getString("direction")),
       rs.getString("reason"),
       rs.getString("merchant"),
       rs.getString("payment_method"),
@@ -43,14 +45,14 @@ public class TransactionRepository {
       rs.getObject("created_at", OffsetDateTime.class));
 
   public record NewTransaction(
-      long userId, UUID id, LocalDate date, long amountMinor, String currency, String reason, String reasonKey,
-      String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
+      long userId, UUID id, LocalDate date, long amountMinor, String currency, String direction, String reason,
+      String reasonKey, String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
       String category, String categorySource, String dedupeKey, String note) {}
 
   /** Replaces every user-editable column; the dedupe key keeps identifying the originally received record. */
   public record EditedTransaction(
-      long userId, UUID id, LocalDate date, long amountMinor, String currency, String reason, String reasonKey,
-      String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
+      long userId, UUID id, LocalDate date, long amountMinor, String currency, String direction, String reason,
+      String reasonKey, String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
       String category, String categorySource, String note) {}
 
   public record KnownCategory(String category, String source) {}
@@ -58,14 +60,15 @@ public class TransactionRepository {
   public record PendingReason(String reasonKey, String reason) {}
 
   /**
-   * {@code minMinor}/{@code maxMinor} are inclusive amount bounds in paise; {@code kind} is spent, invested or
-   * ownTransfers, the same split (INR only) as the summary's money-out-by-bank.
+   * {@code minMinor}/{@code maxMinor} are inclusive amount bounds in paise; {@code kind} is spent, invested,
+   * ownTransfers or received, the same split (INR only) as the summary's per-bank money in and out. Without a
+   * {@code direction}, received means credits and the other kinds mean debits.
    */
   public record Filter(
       LocalDate from, LocalDate to, String category, String currency, String q, Long minMinor, Long maxMinor,
-      String bank, String kind, int limit, int offset) {}
+      String bank, String kind, Direction direction, int limit, int offset) {}
 
-  public static final List<String> KINDS = List.of("spent", "invested", "ownTransfers");
+  public static final List<String> KINDS = List.of("spent", "invested", "ownTransfers", "received");
 
   private static final List<String> OWN_TRANSFER_LABELS = Arrays.stream(Category.values())
       .filter(Category::isOwnTransfer)
@@ -95,15 +98,65 @@ public class TransactionRepository {
 
   public record SameDayMatch(String reasonKey, String upiRef, String bank, String cardLast4) {}
 
-  /** Rows with a parsed merchant on the same date for exactly the same amount. */
-  public List<SameDayMatch> sameDaySameAmount(long userId, LocalDate date, long amountMinor, String currency) {
+  /** Rows with a parsed merchant on the same date, in the same direction, for exactly the same amount. */
+  public List<SameDayMatch> sameDaySameAmount(
+      long userId, Direction direction, LocalDate date, long amountMinor, String currency) {
     return jdbc.sql("""
         SELECT reason_key, upi_ref, bank, card_last4 FROM transactions
-        WHERE user_id = ? AND date = ? AND amount_minor = ? AND currency = ? AND merchant IS NOT NULL""")
-        .params(userId, date, amountMinor, currency)
+        WHERE user_id = ? AND direction = ? AND date = ? AND amount_minor = ? AND currency = ?
+          AND merchant IS NOT NULL""")
+        .params(userId, direction.name(), date, amountMinor, currency)
         .query((rs, i) -> new SameDayMatch(
             rs.getString("reason_key"), rs.getString("upi_ref"), rs.getString("bank"), rs.getString("card_last4")))
         .list();
+  }
+
+  public record Counterpart(UUID id, String category, String categorySource) {}
+
+  /**
+   * The other side of a move between the user's own accounts: opposite direction, same amount, within a day, and
+   * not the same bank. The closest date wins.
+   */
+  public Optional<Counterpart> ownTransferCounterpart(
+      long userId, UUID exceptId, Direction direction, LocalDate date, long amountMinor, String currency, String bank) {
+    return jdbc.sql("""
+        SELECT id, category, category_source FROM transactions
+        WHERE user_id = :userId AND id <> :exceptId AND direction = :other AND amount_minor = :amountMinor
+          AND currency = :currency AND date BETWEEN :from AND :to
+          AND (CAST(:bank AS TEXT) IS NULL OR bank IS NULL OR bank <> :bank)
+        ORDER BY ABS(date - CAST(:date AS DATE)), created_at
+        LIMIT 1""")
+        .param("userId", userId)
+        .param("exceptId", exceptId)
+        .param("other", (direction == Direction.DEBIT ? Direction.CREDIT : Direction.DEBIT).name())
+        .param("amountMinor", amountMinor)
+        .param("currency", currency)
+        .param("from", date.minusDays(1))
+        .param("to", date.plusDays(1))
+        .param("date", date)
+        .param("bank", bank)
+        .query((rs, i) -> new Counterpart(
+            rs.getObject("id", UUID.class), rs.getString("category"), rs.getString("category_source")))
+        .optional();
+  }
+
+  /** Labels one row Self Transfer unless the user set its category by hand. */
+  public void markSelfTransfer(long userId, UUID id) {
+    jdbc.sql("""
+        UPDATE transactions SET category = ?, category_source = 'rule'
+        WHERE user_id = ? AND id = ? AND (category_source IS NULL OR category_source <> 'manual')""")
+        .params(Category.SELF_TRANSFER.label(), userId, id)
+        .update();
+  }
+
+  public record Span(LocalDate first, LocalDate last) {}
+
+  /** Dates of the oldest and newest transaction, both null when there are none. */
+  public Span span(long userId) {
+    return jdbc.sql("SELECT MIN(date) AS first, MAX(date) AS last FROM transactions WHERE user_id = ?")
+        .param(userId)
+        .query((rs, i) -> new Span(rs.getObject("first", LocalDate.class), rs.getObject("last", LocalDate.class)))
+        .single();
   }
 
   public Optional<KnownCategory> knownCategory(long userId, String reasonKey) {
@@ -116,20 +169,20 @@ public class TransactionRepository {
   public void insert(NewTransaction t) {
     jdbc.sql("""
         INSERT INTO transactions
-          (user_id, id, date, amount_minor, currency, reason, reason_key, merchant, payment_method, upi_ref,
+          (user_id, id, date, amount_minor, currency, direction, reason, reason_key, merchant, payment_method, upi_ref,
            card_last4, bank, category, category_source, dedupe_key, note)
-        VALUES (:userId, :id, :date, :amountMinor, :currency, :reason, :reasonKey, :merchant, :paymentMethod,
-           :upiRef, :cardLast4, :bank, :category, :categorySource, :dedupeKey, :note)""")
+        VALUES (:userId, :id, :date, :amountMinor, :currency, :direction, :reason, :reasonKey, :merchant,
+           :paymentMethod, :upiRef, :cardLast4, :bank, :category, :categorySource, :dedupeKey, :note)""")
         .paramSource(t)
         .update();
   }
 
   public void update(EditedTransaction t) {
     jdbc.sql("""
-        UPDATE transactions SET date = :date, amount_minor = :amountMinor, currency = :currency, reason = :reason,
-          reason_key = :reasonKey, merchant = :merchant, payment_method = :paymentMethod, upi_ref = :upiRef,
-          card_last4 = :cardLast4, bank = :bank, category = :category, category_source = :categorySource,
-          note = :note
+        UPDATE transactions SET date = :date, amount_minor = :amountMinor, currency = :currency,
+          direction = :direction, reason = :reason, reason_key = :reasonKey, merchant = :merchant,
+          payment_method = :paymentMethod, upi_ref = :upiRef, card_last4 = :cardLast4, bank = :bank,
+          category = :category, category_source = :categorySource, note = :note
         WHERE id = :id AND user_id = :userId""")
         .paramSource(t)
         .update();
@@ -203,6 +256,10 @@ public class TransactionRepository {
     }
     if (f.kind() != null) {
       where.add("currency = 'INR'");
+      Direction direction = f.direction() != null ? f.direction()
+          : "received".equals(f.kind()) ? Direction.CREDIT : Direction.DEBIT;
+      where.add("direction = :direction");
+      params.put("direction", direction.name());
       switch (f.kind()) {
         case "invested" -> {
           where.add("category = :investments");
@@ -217,6 +274,9 @@ public class TransactionRepository {
           params.put("notSpending", NOT_SPENDING_LABELS);
         }
       }
+    } else if (f.direction() != null) {
+      where.add("direction = :direction");
+      params.put("direction", f.direction().name());
     }
     String clause = " WHERE " + String.join(" AND ", where);
 
@@ -285,17 +345,19 @@ public class TransactionRepository {
     return jdbc.sql("DELETE FROM transactions WHERE user_id = ? AND id = ?").params(userId, id).update() > 0;
   }
 
+  /** Debits only: credits get their category from fixed rules or the user, never from Gemini. */
   public List<PendingReason> pendingReasons(long userId, int limit) {
     return jdbc.sql("""
         SELECT reason_key, MIN(reason) AS reason FROM transactions
-        WHERE user_id = ? AND category IS NULL GROUP BY reason_key ORDER BY MIN(created_at) LIMIT ?""")
+        WHERE user_id = ? AND category IS NULL AND direction = 'DEBIT'
+        GROUP BY reason_key ORDER BY MIN(created_at) LIMIT ?""")
         .params(userId, limit)
         .query((rs, i) -> new PendingReason(rs.getString("reason_key"), rs.getString("reason")))
         .list();
   }
 
   public int pendingCount(long userId) {
-    return jdbc.sql("SELECT COUNT(*) FROM transactions WHERE user_id = ? AND category IS NULL")
+    return jdbc.sql("SELECT COUNT(*) FROM transactions WHERE user_id = ? AND category IS NULL AND direction = 'DEBIT'")
         .param(userId)
         .query(Integer.class)
         .single();

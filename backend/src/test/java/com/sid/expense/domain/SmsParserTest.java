@@ -11,9 +11,100 @@ class SmsParserTest {
   private static final LocalDate RECEIVED = LocalDate.of(2026, 10, 10);
 
   private static Map<String, Object> debit(String body, String sender) {
+    var f = parsed(body, sender);
+    assertThat(f).containsEntry("direction", "debit");
+    return f;
+  }
+
+  private static Map<String, Object> credit(String body, String sender) {
+    var f = parsed(body, sender);
+    assertThat(f).containsEntry("direction", "credit");
+    return f;
+  }
+
+  private static Map<String, Object> parsed(String body, String sender) {
     var result = SmsParser.parse(body, sender, RECEIVED);
-    assertThat(result).isInstanceOf(SmsParser.Debit.class);
-    return ((SmsParser.Debit) result).fields();
+    assertThat(result).isInstanceOf(SmsParser.Parsed.class);
+    return ((SmsParser.Parsed) result).fields();
+  }
+
+  @Test
+  void endsPayeeWhereTheBankGluesSentencesTogether() {
+    var f = debit("A/c *4321 debited Rs.18000.00 on 12-10-26 to SIDDHANT ANAND.RRN 514533249031.Avl Bal Rs.136.42."
+        + "Not you?SMS BLOCK to 9289592895-Indian Bank", "JM-INDBNK-S");
+    assertThat(f).containsEntry("reason", "SIDDHANT ANAND").containsEntry("amount", "18000.00")
+        .containsEntry("bankName", "Indian Bank").containsEntry("upiRef", "514533249031");
+    assertThat(debit("A/c *4321 debited Rs.50.00 on 12-10-26 to CHAI POINT.RRN 514533249032.", ""))
+        .containsEntry("reason", "CHAI POINT").containsEntry("bankName", null);
+  }
+
+  @Test
+  void readsHdfcUpiCreditFromVpa() {
+    var f = credit("Rs.500.00 credited to HDFC Bank A/c XX1122 on 05-10-26 from VPA rahul@oksbi "
+        + "(UPI 450000000031)", "VM-HDFCBK");
+    assertThat(f).containsEntry("amount", "500.00").containsEntry("date", "2026-10-05")
+        .containsEntry("reason", "rahul@oksbi").containsEntry("bankName", "HDFC Bank")
+        .containsEntry("paymentMethod", "UPI").containsEntry("upiRef", "450000000031")
+        .doesNotContainKey("category");
+  }
+
+  @Test
+  void readsHdfcMoneyReceived() {
+    var f = credit("Money Received - INR 1,250.00 in your HDFC Bank A/c xx1122 on 06-10-26 by A/c linked to "
+        + "VPA priya@okicici (UPI Ref No 450000000032).", "HDFCBK");
+    assertThat(f).containsEntry("amount", "1250.00").containsEntry("reason", "priya@okicici")
+        .containsEntry("upiRef", "450000000032");
+  }
+
+  @Test
+  void readsSbiCreditsAndPrefersTheNameAfterFrom() {
+    var deposit = credit("Your A/C XXXXX1234 Credited INR 50,000.00 on 07/10/26 -Deposit by transfer from "
+        + "SIDDHANT ANAND.", "SBIINB");
+    assertThat(deposit).containsEntry("reason", "SIDDHANT ANAND").containsEntry("amount", "50000.00")
+        .containsEntry("bankName", "State Bank of India");
+
+    var upi = credit("Dear SBI UPI User, ur A/cX1234 credited by Rs500.0 on 05Oct26 by (Ref no 450000000033)", "SBIUPI");
+    assertThat(upi).containsEntry("amount", "500.0").containsEntry("reason", "Money received")
+        .containsEntry("upiRef", "450000000033");
+  }
+
+  @Test
+  void readsIciciNeftCreditSenderFromInfo() {
+    var f = credit("ICICI Bank Account XX123 credited:Rs. 1,00,000.00 on 01-Oct-26. Info NEFT-HDFCN52026100112345-"
+        + "ACME TECHNOLOGIES PVT LTD. Available Balance is Rs. 2,00,000.00.", "ICICIT");
+    assertThat(f).containsEntry("amount", "100000.00").containsEntry("reason", "ACME TECHNOLOGIES PVT LTD")
+        .containsEntry("paymentMethod", "NEFT").containsEntry("date", "2026-10-01");
+  }
+
+  @Test
+  void tagsSalaryInterestAndRefunds() {
+    assertThat(credit("Rs.200 credited to your a/c XX9001. Refund from Swiggy.", "SBMBNK"))
+        .containsEntry("reason", "Swiggy").containsEntry("category", "Refund & Cashback");
+    assertThat(credit("Rs.349 credited to your a/c XX9001. Refund from Swiggy for order 88123.", "SBMBNK"))
+        .containsEntry("reason", "Swiggy");
+    assertThat(credit("Your a/c XX9001 is credited with INR 85,000.00 on 30-09-26 towards SALARY SEP 26.", "SBMBNK"))
+        .containsEntry("category", "Salary");
+    assertThat(credit("Interest of Rs.312.40 has been credited to your A/c XX1122 on 30-09-26.", "HDFCBK"))
+        .containsEntry("category", "Interest").containsEntry("reason", "Interest");
+  }
+
+  @Test
+  void readsDebitThatAlsoNamesTheCreditedPayee() {
+    var f = debit("ICICI Bank Acct XX123 debited for Rs 500.00 on 05-Oct-26; RAHUL KUMAR credited. "
+        + "UPI:450000000034. Call 18002662 for dispute.", "ICICIT");
+    assertThat(f).containsEntry("amount", "500.00").containsEntry("reason", "RAHUL KUMAR");
+  }
+
+  @Test
+  void skipsCreditsThatAreNotMoneyIn() {
+    assertThat(SmsParser.parse("Payment of Rs 10,000.00 received towards your ICICI Bank Credit Card XX7007. Thank you.",
+        "ICICIT", RECEIVED)).isEqualTo(new SmsParser.Skip("Card bill payment received"));
+    assertThat(SmsParser.parse("Congrats! Get up to Rs 5,00,000 credited to your account instantly. Apply now.",
+        "LOANCO", RECEIVED)).isEqualTo(new SmsParser.Skip("Offer, not a credit"));
+    assertThat(SmsParser.parse("Your order has been received and will be delivered soon.", "AMAZON", RECEIVED))
+        .isEqualTo(new SmsParser.Skip("Not a bank credit"));
+    assertThat(SmsParser.parse("Refund of Rs.499 initiated for your order; it will reflect in your account in 5 days.",
+        "AMAZON", RECEIVED)).isEqualTo(new SmsParser.Skip("Upcoming, not done yet"));
   }
 
   @Test
@@ -107,13 +198,11 @@ class SmsParserTest {
   }
 
   @Test
-  void skipsMessagesThatAreNotCompletedDebits() {
+  void skipsMessagesThatAreNotCompletedPayments() {
     assertThat(SmsParser.parse("123456 is your OTP for a payment of Rs.500 at AMAZON. Do not share.", "HDFCBK", RECEIVED))
-        .isEqualTo(new SmsParser.Skip("Not a debit message"));
+        .isEqualTo(new SmsParser.Skip("Not a debit or credit"));
     assertThat(SmsParser.parse("Rs.2500 will be debited from your a/c on 15-Oct-26 towards Groww SIP.", "HDFCBK", RECEIVED))
-        .isEqualTo(new SmsParser.Skip("Upcoming payment, not a debit yet"));
-    assertThat(SmsParser.parse("Rs.200 credited to your a/c XX9001. Refund from Swiggy.", "SBMBNK", RECEIVED))
-        .isInstanceOf(SmsParser.Skip.class);
+        .isEqualTo(new SmsParser.Skip("Upcoming, not done yet"));
     assertThat(SmsParser.parse("Txn of Rs.300 debited at ZOMATO failed. Amount will be refunded.", "HDFCBK", RECEIVED))
         .isInstanceOf(SmsParser.Skip.class);
   }

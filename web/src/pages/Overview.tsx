@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   Area, AreaChart, CartesianGrid, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { ArrowRight, CalendarDays, CircleQuestionMark, PiggyBank, ReceiptText, Sparkles, TrendingUp, Wallet } from 'lucide-react';
+import { ArrowDownLeft, ArrowRight, CalendarDays, CircleQuestionMark, PiggyBank, Scale, Sparkles, Wallet } from 'lucide-react';
 import { api, type Analysis, type Summary } from '../api';
 import { CategoryIcon, categoryMeta } from '../categories';
 import { methodLabel, money, moneyCompact, moneyWhole, rangeLabel, shortDate, type Period } from '../format';
@@ -61,17 +61,18 @@ export function Overview(props: {
   if (!cur || !prev) return <OverviewSkeleton />;
 
   const trend = cur.daily.map((d, i) => ({ ...d, prevDate: prev.daily[i]?.date, prev: prev.daily[i]?.total ?? 0 }));
-  const peak = cur.daily.reduce((m, d) => (d.total > m.total ? d : m), cur.daily[0]);
   const top = cur.byCategory.slice(0, 6);
   const methodTotal = cur.byPaymentMethod.reduce((s, m) => s + m.total, 0) || 1;
   const bankTotal = cur.byBank.reduce((s, b) => s + b.total, 0) || 1;
   const maxCat = cur.byCategory[0]?.total || 1;
+  const biggestIn = cur.largestReceived[0];
+  const sign = (n: number) => (n > 0 ? '+' : n < 0 ? '−' : '');
 
-  if (cur.count === 0 && cur.investedCount === 0 && cur.ownTransferCount === 0) {
+  if (cur.count === 0 && cur.investedCount === 0 && cur.ownTransferCount === 0 && cur.receivedCount === 0) {
     return (
       <div className="card">
-        <Empty icon={<CalendarDays size={28} />} title="Nothing spent in this period">
-          <p>No transactions between {rangeLabel(cur.from, cur.to)}. Try a wider range above.</p>
+        <Empty icon={<CalendarDays size={28} />} title="Nothing in this period">
+          <p>No money in or out between {rangeLabel(cur.from, cur.to)}. Try a wider range above.</p>
         </Empty>
       </div>
     );
@@ -82,29 +83,37 @@ export function Overview(props: {
       <div className="grid kpis">
         <div className="card kpi kpi-hero">
           <div className="kpi-top">
-            <span className="kpi-label"><span className="kpi-icon" style={{ background: 'var(--primary-soft)', color: 'var(--primary)' }}><Wallet size={16} /></span>Total spent</span>
+            <span className="kpi-label"><span className="kpi-icon" style={{ background: 'var(--primary-soft)', color: 'var(--primary)' }}><Wallet size={16} /></span>Spent</span>
             <Delta current={cur.total} previous={prev.total} />
           </div>
           <div className="kpi-value">{moneyWhole(cur.total)}</div>
-          <div className="kpi-foot">vs {moneyWhole(prev.total)} in the previous {cur.daily.length} days</div>
-        </div>
-        <div className="card kpi">
-          <div className="kpi-top">
-            <span className="kpi-label"><span className="kpi-icon" style={{ background: 'rgba(79,179,255,.14)', color: '#4FB3FF' }}><TrendingUp size={16} /></span>Daily average</span>
-            <Delta current={cur.averagePerDay} previous={prev.averagePerDay} />
-          </div>
-          <div className="kpi-value">{moneyWhole(cur.averagePerDay)}</div>
-          <div className="kpi-foot">Peak {moneyWhole(peak.total)} on {shortDate(peak.date)}</div>
-        </div>
-        <div className="card kpi">
-          <div className="kpi-top">
-            <span className="kpi-label"><span className="kpi-icon" style={{ background: 'var(--amber-soft)', color: 'var(--amber)' }}><ReceiptText size={16} /></span>Transactions</span>
+          <div className="kpi-foot">
+            {moneyWhole(cur.averagePerDay)}/day · {cur.count} debit{cur.count === 1 ? '' : 's'}
             {cur.uncategorizedCount > 0 && (
-              <span className="badge badge-amber"><CircleQuestionMark size={12} />{cur.uncategorizedCount} uncategorised</span>
+              <span className="badge badge-amber" title="Uncategorised"><CircleQuestionMark size={12} />{cur.uncategorizedCount}</span>
             )}
           </div>
-          <div className="kpi-value">{cur.count}</div>
-          <div className="kpi-foot">Avg ticket {moneyWhole(cur.count ? cur.total / cur.count : 0)}</div>
+        </div>
+        <button className="card kpi kpi-link" onClick={() => { window.location.hash = '/transactions?direction=credit'; }}>
+          <div className="kpi-top">
+            <span className="kpi-label"><span className="kpi-icon" style={{ background: 'var(--teal-soft)', color: 'var(--teal)' }}><ArrowDownLeft size={16} /></span>Received</span>
+            {cur.receivedCount > 0 && <Delta current={cur.received} previous={prev.received} goodUp />}
+          </div>
+          <div className="kpi-value" style={{ color: cur.received ? 'var(--teal)' : undefined }}>{moneyWhole(cur.received)}</div>
+          <div className="kpi-foot">
+            {biggestIn
+              ? `Biggest ${moneyWhole(biggestIn.amount)} from ${biggestIn.payee}`
+              : 'No credits yet · see Help to add them to your Shortcut'}
+          </div>
+        </button>
+        <div className="card kpi">
+          <div className="kpi-top">
+            <span className="kpi-label"><span className="kpi-icon" style={{ background: 'var(--amber-soft)', color: 'var(--amber)' }}><Scale size={16} /></span>Net</span>
+          </div>
+          <div className="kpi-value" style={{ color: cur.net > 0 ? 'var(--teal)' : cur.net < 0 ? 'var(--rose)' : undefined }}>
+            {sign(cur.net)}{moneyWhole(Math.abs(cur.net))}
+          </div>
+          <div className="kpi-foot">Received minus spent{cur.invested ? ' and invested' : ''}</div>
         </div>
         <div className="card kpi">
           <div className="kpi-top">

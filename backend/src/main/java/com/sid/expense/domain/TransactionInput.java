@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 /** Validated POST body item. Amounts are kept in minor units (paise) to avoid float errors. */
 public record TransactionInput(
     LocalDate date, long amountMinor, String reason, String currency, String bank, String paymentMethod,
-    String cardLast4, String upiRef, String note) {
+    String cardLast4, String upiRef, String note, Direction direction, Category category) {
 
   public static final String BASE_CURRENCY = "INR";
   private static final BigDecimal MAX_AMOUNT = new BigDecimal("1000000000");
@@ -28,7 +28,10 @@ public record TransactionInput(
     }
   }
 
-  /** API contract: {date, amount, reason, currency?, bankName? (or bank?), paymentMethod?, cardLast4?, upiRef?, note?}. */
+  /**
+   * API contract: {date, amount, reason, currency?, bankName? (or bank?), paymentMethod?, cardLast4?, upiRef?, note?,
+   * direction? (debit|credit, default debit), category? (a starting category that fits the direction)}.
+   */
   public static Parsed parse(Object item) {
     List<Issue> issues = new ArrayList<>();
     if (!(item instanceof Map<?, ?> map)) {
@@ -99,15 +102,37 @@ public record TransactionInput(
     String note = blankToNull(map.get("note"));
     if (note != null && note.length() > 500) issues.add(new Issue("note", "Note must be at most 500 characters"));
 
+    Direction direction = Direction.DEBIT;
+    String rawDirection = blankToNull(map.get("direction"));
+    if (rawDirection != null) {
+      direction = Direction.parse(rawDirection).orElse(null);
+      if (direction == null) issues.add(new Issue("direction", "direction must be debit or credit"));
+    }
+
+    Category category = null;
+    String rawCategory = blankToNull(map.get("category"));
+    if (rawCategory != null) {
+      category = Category.fromLabel(rawCategory).orElse(null);
+      if (category == null || (direction != null && !category.fits(direction))) {
+        issues.add(new Issue("category", "Unknown category for a " + (direction == null ? "debit" : direction.json())));
+      }
+    }
+
     return issues.isEmpty()
         ? new Parsed(
-            new TransactionInput(date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, note),
+            new TransactionInput(
+                date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, note, direction, category),
             List.of())
         : new Parsed(null, issues);
   }
 
   public TransactionInput withBank(String canonical) {
-    return new TransactionInput(date, amountMinor, reason, currency, canonical, paymentMethod, cardLast4, upiRef, note);
+    return new TransactionInput(
+        date, amountMinor, reason, currency, canonical, paymentMethod, cardLast4, upiRef, note, direction, category);
+  }
+
+  public boolean isCredit() {
+    return direction == Direction.CREDIT;
   }
 
   private static String blankToNull(Object v) {

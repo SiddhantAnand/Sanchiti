@@ -25,7 +25,11 @@ public enum Category {
   SELF_TRANSFER("Self Transfer"),
   CARD_BILL("Card Bill Payment"),
   FEES_CHARGES("Fees & Charges"),
-  OTHER("Other");
+  OTHER("Other"),
+  SALARY("Salary"),
+  REFUND_CASHBACK("Refund & Cashback"),
+  INTEREST("Interest"),
+  RECEIVED("Received");
 
   public static final String UNCATEGORIZED = "Uncategorized";
 
@@ -46,6 +50,21 @@ public enum Category {
 
   public static List<String> labels() {
     return Arrays.stream(values()).map(Category::label).toList();
+  }
+
+  public static List<String> labels(Direction direction) {
+    return Arrays.stream(values()).filter(c -> c.fits(direction)).map(Category::label).toList();
+  }
+
+  /** Money coming in: salary, refunds, interest or anything else received. */
+  public boolean isIncome() {
+    return this == SALARY || this == REFUND_CASHBACK || this == INTEREST || this == RECEIVED;
+  }
+
+  /** Self Transfer is the only category used on both sides: out of one own account and into another. */
+  public boolean fits(Direction direction) {
+    if (this == SELF_TRANSFER) return true;
+    return direction == Direction.CREDIT ? isIncome() : !isIncome();
   }
 
   /** Money moved to the user's own accounts or card bill; the card spends themselves are already counted. */

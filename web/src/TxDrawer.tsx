@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
-import { CircleAlert, CreditCard, Landmark, LoaderCircle, Smartphone, Sparkles, Wallet } from 'lucide-react';
-import { api, ApiError, reviewParts, type ReviewItem, type Transaction, type TransactionFields } from './api';
+import { ArrowDownLeft, ArrowUpRight, CircleAlert, CreditCard, Landmark, LoaderCircle, Smartphone, Sparkles, Wallet } from 'lucide-react';
+import { api, ApiError, reviewParts, type Direction, type ReviewItem, type Transaction, type TransactionFields } from './api';
 import { Drawer, useToast } from './ui';
 import { CategoryIcon } from './categories';
 import { longDate, money, toIso } from './format';
 
-export type DrawerMode = { kind: 'add' } | { kind: 'edit'; tx: Transaction } | { kind: 'review'; item: ReviewItem };
+export type DrawerMode =
+  | { kind: 'add'; direction?: Direction }
+  | { kind: 'edit'; tx: Transaction }
+  | { kind: 'review'; item: ReviewItem };
 
 const METHODS = [
   { value: 'UPI', label: 'UPI', icon: Smartphone },
@@ -31,7 +34,7 @@ function initialFields(mode: DrawerMode): TransactionFields {
     const t = mode.tx;
     return {
       date: t.date, amount: String(t.amount), reason: t.reason, currency: t.currency, bankName: t.bank,
-      paymentMethod: t.paymentMethod, cardLast4: t.cardLast4, upiRef: t.upiRef, note: t.note,
+      paymentMethod: t.paymentMethod, cardLast4: t.cardLast4, upiRef: t.upiRef, note: t.note, direction: t.direction,
     };
   }
   if (mode.kind === 'review') {
@@ -40,16 +43,18 @@ function initialFields(mode: DrawerMode): TransactionFields {
       date: isoDate(p.date), amount: str(p.amount), reason: str(p.reason), currency: 'INR',
       bankName: str(p.bankName) || null, paymentMethod: str(p.paymentMethod).toUpperCase() || null,
       cardLast4: str(p.cardLast4) || null, upiRef: str(p.upiRef) || null, note: null,
+      direction: p.direction === 'credit' ? 'credit' : 'debit',
     };
   }
   return {
     date: toIso(new Date()), amount: '', reason: '', currency: 'INR', bankName: null,
-    paymentMethod: 'UPI', cardLast4: null, upiRef: null, note: null,
+    paymentMethod: 'UPI', cardLast4: null, upiRef: null, note: null, direction: mode.direction ?? 'debit',
   };
 }
 
 export function TxDrawer(props: {
-  mode: DrawerMode; categories: string[]; banks: string[]; aiEnabled: boolean; onClose: () => void; onSaved: () => void;
+  mode: DrawerMode; categories: string[]; creditCategories: string[]; banks: string[]; aiEnabled: boolean;
+  onClose: () => void; onSaved: () => void;
 }) {
   const { mode } = props;
   const toast = useToast();
@@ -63,6 +68,14 @@ export function TxDrawer(props: {
 
   const set = <K extends keyof TransactionFields>(k: K, v: TransactionFields[K]) => setF((x) => ({ ...x, [k]: v }));
   const blank = (s: string) => (s.trim() === '' ? null : s.trim());
+  const credit = f.direction === 'credit';
+  const options = credit ? props.creditCategories : props.categories;
+
+  function setDirection(d: Direction) {
+    set('direction', d);
+    const fits = (d === 'credit' ? props.creditCategories : props.categories).includes(category);
+    if (!fits) setCategory(GEMINI);
+  }
 
   const bankOptions = f.bankName && !props.banks.includes(f.bankName) ? [...props.banks, f.bankName] : props.banks;
 
@@ -115,7 +128,7 @@ export function TxDrawer(props: {
       ? `${longDate(mode.tx.date)} · ${money(mode.tx.amount, mode.tx.currency)}`
       : mode.kind === 'review'
         ? 'Correct the details the sender got wrong'
-        : 'Record a spend the bank feed missed';
+        : 'Record a spend or credit the bank feed missed';
 
   return (
     <Drawer
@@ -146,6 +159,15 @@ export function TxDrawer(props: {
         </div>
       )}
 
+      <div className="segmented dir-toggle" role="radiogroup" aria-label="Direction">
+        <button type="button" className={!credit ? 'on' : ''} aria-checked={!credit} role="radio" onClick={() => setDirection('debit')}>
+          <ArrowUpRight size={15} /> Money out
+        </button>
+        <button type="button" className={credit ? 'on' : ''} aria-checked={credit} role="radio" onClick={() => setDirection('credit')}>
+          <ArrowDownLeft size={15} /> Money in
+        </button>
+      </div>
+
       <label className="field">
         <span>Amount</span>
         <div className="amount-input">
@@ -163,9 +185,9 @@ export function TxDrawer(props: {
 
       <div className="form-grid">
         <label className="field full">
-          <span>Paid to / description</span>
-          <input className="input" placeholder="e.g. Swiggy, Rent, Chai at Tea Tower" maxLength={200}
-            value={f.reason} onChange={(e) => set('reason', e.target.value)} />
+          <span>{credit ? 'Received from / description' : 'Paid to / description'}</span>
+          <input className="input" placeholder={credit ? 'e.g. Salary, Rahul, Amazon refund' : 'e.g. Swiggy, Rent, Chai at Tea Tower'}
+            maxLength={200} value={f.reason} onChange={(e) => set('reason', e.target.value)} />
         </label>
         <label className="field">
           <span>Date</span>
@@ -176,8 +198,8 @@ export function TxDrawer(props: {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <CategoryIcon category={category || null} size={40} />
             <select className="select" value={category} onChange={(e) => setCategory(e.target.value)}>
-              <option value={GEMINI}>{props.aiEnabled ? '✦ Let Gemini decide' : 'Uncategorized'}</option>
-              {props.categories.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value={GEMINI}>{credit ? 'Automatic' : props.aiEnabled ? '✦ Let Gemini decide' : 'Uncategorized'}</option>
+              {options.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
         </label>
@@ -233,6 +255,7 @@ export function TxDrawer(props: {
         <div className="meta-box">
           {mode.tx.categorySource === 'ai' && <span className="badge badge-gemini"><Sparkles size={12} /> Categorised by Gemini</span>}
           {mode.tx.categorySource === 'manual' && <span className="badge badge-violet">Category set by you</span>}
+          {mode.tx.categorySource === 'rule' && <span className="badge">Category set automatically</span>}
           {mode.tx.upiRef && <span className="badge">UPI ref {mode.tx.upiRef}</span>}
           <span className="faint">Added {new Date(mode.tx.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
         </div>

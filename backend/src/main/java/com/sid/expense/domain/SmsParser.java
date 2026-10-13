@@ -17,10 +17,10 @@ import java.util.regex.Pattern;
 /** Turns a raw bank SMS into the same fields a POST to /api/transactions carries, using fixed rules only. */
 public final class SmsParser {
 
-  public sealed interface Result permits Debit, Skip, Unreadable {}
+  public sealed interface Result permits Parsed, Skip, Unreadable {}
 
   /** Keys match the /api/transactions contract so the result goes through the normal validation. */
-  public record Debit(Map<String, Object> fields) implements Result {}
+  public record Parsed(Map<String, Object> fields) implements Result {}
 
   public record Skip(String why) implements Result {}
 
@@ -31,16 +31,30 @@ public final class SmsParser {
 
   private static final Pattern DEBIT = Pattern.compile(
       "\\b(?:debited|spent|sent|paid|deducted|withdrawn|purchase)\\b|\\bdebit(?:ed)?\\s+(?:for|of|by|with)\\b", I);
-  private static final List<Map.Entry<Pattern, String>> NOT_A_DEBIT = List.of(
+  private static final Pattern CREDIT = Pattern.compile(
+      "\\b(?:credited|received|deposited|refund(?:ed)?|reversed|reversal|cashback)\\b", I);
+  private static final List<Map.Entry<Pattern, String>> NOT_A_TRANSACTION = List.of(
       Map.entry(Pattern.compile("\\b(?:otp|one[- ]time password|verification code)\\b", I), "OTP"),
       Map.entry(Pattern.compile("\\binvoice\\b|\\bstatement\\b|\\bpay (?:now|by)\\b|\\bplease pay\\b"
           + "|\\bignore if (?:already )?paid\\b|\\b(?:total|minimum|amount) due\\b", I), "Bill or reminder, not a payment"),
-      Map.entry(Pattern.compile("\\bwill be (?:debited|deducted|charged)\\b|\\bscheduled\\b|\\bis due\\b|\\bdue (?:on|date)\\b"
-          + "|\\breminder\\b", I), "Upcoming payment, not a debit yet"),
+      Map.entry(Pattern.compile("\\bwill be (?:debited|deducted|charged|credited|refunded|reversed)\\b|\\bscheduled\\b"
+          + "|\\bis due\\b|\\bdue (?:on|date)\\b|\\breminder\\b", I),
+          "Upcoming, not done yet"),
       Map.entry(Pattern.compile("\\b(?:failed|declined|unsuccessful)\\b", I), "Failed payment"),
-      Map.entry(Pattern.compile("\\b(?:reversed|reversal|refund(?:ed)?)\\b", I), "Refund or reversal"),
-      Map.entry(Pattern.compile("\\bunits?\\b.*\\ballot", I), "Mutual fund units notice"),
-      Map.entry(Pattern.compile("\\bcredited to your\\b|\\bpayment\\b.*\\breceived\\b", I), "Credit, not a debit"));
+      Map.entry(Pattern.compile("\\bunits?\\b.*\\ballot", I), "Mutual fund units notice"));
+  private static final List<Map.Entry<Pattern, String>> NOT_A_CREDIT = List.of(
+      // Debit alerts say "if you have not initiated this", so this only applies to credits.
+      Map.entry(Pattern.compile("\\binitiated\\b|\\bwill reflect\\b", I), "Upcoming, not done yet"),
+      // The card side of a bill payment; the bank side is already counted as Card Bill Payment.
+      Map.entry(Pattern.compile("\\bpayment\\b.*\\bcard\\b|\\bcard\\b.*\\bpayment\\b", I), "Card bill payment received"),
+      Map.entry(Pattern.compile("\\bpre-?approved\\b|\\bapply\\b|\\beligible\\b|\\bup ?to (?:rs|inr|₹)", I), "Offer, not a credit"));
+  // A real credit names the account, card or payment rail it arrived on.
+  private static final Pattern MONEY_CONTEXT = Pattern.compile(
+      "\\b(?:a/?c|acct|account|card|upi|vpa|imps|neft|rtgs|wallet)\\b", I);
+  private static final List<Map.Entry<Pattern, Category>> CREDIT_HINTS = List.of(
+      Map.entry(Pattern.compile("\\b(?:refund(?:ed)?|reversed|reversal|cashback)\\b", I), Category.REFUND_CASHBACK),
+      Map.entry(Pattern.compile("\\binterest\\b|\\bint\\.? (?:paid|cr)\\b", I), Category.INTEREST),
+      Map.entry(Pattern.compile("\\bsal(?:ary)?\\b|\\bpayroll\\b", I), Category.SALARY));
 
   private static final Pattern AMOUNT = Pattern.compile("(?:\\bRs\\.?|\\bINR|₹)\\s*([\\d,]+(?:\\.\\d{1,2})?)", I);
 
@@ -63,9 +77,11 @@ public final class SmsParser {
   private static final Pattern UPI = Pattern.compile("\\b(?:upi|vpa)\\b", I);
   private static final Pattern TRANSFER = Pattern.compile("\\b(imps|neft|rtgs)\\b", I);
 
-  // A payee name ends at a date ("On 03/10/26" or a bare "04/10/26"), a bracket, a ref or a sentence end.
+  // A payee name ends at a date ("On 03/10/26" or a bare "04/10/26"), a bracket, a ref or a sentence end. Some banks
+  // glue sentences without a space: "to SIDDHANT ANAND.RRN 5145...Avl Bal".
   private static final String PAYEE_END =
-      "(?=\\s+on\\s+\\d|\\s+\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b|\\s*\\(|\\s+ref\\b|\\s+(?:through|using)\\b|\\.\\s|\\.?$";
+      "(?=\\s+on\\s+\\d|\\s+\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b|\\s*\\(|\\s+ref\\b|\\s+(?:through|using)\\b|\\.\\s"
+          + "|\\.(?=(?:rrn|ref|avl|avail|upi|not you)\\b)|\\.?$";
 
   private static final List<Pattern> PAYEE = List.of(
       // "spent using ICICI Bank Card XX7007 on 09-Oct-26 on MADHU WINES. Avl Limit"
@@ -75,8 +91,23 @@ public final class SmsParser {
       // "To SIDDHANT ANAND On 03/10/26 Ref ...", "to a/c **0001 (UPI Ref No. ...)"
       Pattern.compile("\\bto\\s+(?:vpa\\s+)?(.+?)" + PAYEE_END + "|\\s+upi\\b|\\s+via\\b|\\s+from\\b)", I),
       Pattern.compile("\\btowards\\s+(.+?)(?=\\s+umrn\\b|\\s+ref\\b|\\.\\s|\\.?$)", I),
+      // ICICI: "Acct XX123 debited for Rs 500.00 on 05-Oct-26; RAHUL KUMAR credited."
+      Pattern.compile(";\\s*([^;.]+?)\\s+credited\\b", I),
       // SBM: "infor :221006/600000000050/00000000/ECMISS/Klook Travel T"
       Pattern.compile("\\binfor?\\b\\s*[:-]?\\s*(.+?)(?=\\.\\s|\\.?$)", I));
+
+  // A sender name ends at a date, bracket, ref, rail name, balance or sentence end.
+  private static final String SENDER_END = "(?=\\s+on\\s+\\d|\\s+on\\s+date\\b|\\s+\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b"
+      + "|\\s*\\(|\\s+ref|\\s+upi\\b|\\s+info\\b|\\s+avl\\b|\\s+avail|\\s+(?:through|using|via|has|is|was|into?|for)\\b"
+      + "|[.;,]\\s|\\.?$)";
+  private static final List<Pattern> SENDER = List.of(
+      // "from VPA rahul@oksbi (UPI 450000000023)", "trf from RAHUL KUMAR Refno ...", "Refund from Swiggy."
+      Pattern.compile("\\bfrom\\s+(?:vpa\\s+)?(.+?)" + SENDER_END, I),
+      // "by A/c linked to VPA rahul@okicici", "by RAHUL KUMAR"
+      Pattern.compile("\\bby\\s+(?:a/?c\\s+linked\\s+to\\s+)?(?:vpa\\s+)?(.+?)" + SENDER_END, I),
+      // ICICI: "Info NEFT-HDFCN52026100512345-RAHUL KUMAR."
+      Pattern.compile("\\binfo\\b\\s*[:-]?\\s*(.+?)(?=\\.\\s|\\s+avl\\b|\\s+avail|\\.?$)", I));
+  private static final Pattern NOT_A_NAME = Pattern.compile("^(?:rs\\.?|inr|₹)\\s*\\d|^\\W*ref\\b", I);
   private static final Pattern IFSC_LIKE = Pattern.compile("^[A-Z]{4}0[A-Z0-9]{0,6}$");
   private static final Pattern LETTER = Pattern.compile("\\p{L}");
 
@@ -84,10 +115,11 @@ public final class SmsParser {
       Map.entry(Pattern.compile("HDFC", I), "HDFC Bank"),
       Map.entry(Pattern.compile("ICICI", I), "ICICI Bank"),
       Map.entry(Pattern.compile("SBM", I), "SBM Bank India"),
-      Map.entry(Pattern.compile("SBI|SBIINB|ATMSBI", I), "State Bank of India"));
+      Map.entry(Pattern.compile("SBI|SBIINB|ATMSBI", I), "State Bank of India"),
+      Map.entry(Pattern.compile("INDBNK|INDIANB", I), "Indian Bank"));
   private static final Pattern TEXT_BANK = Pattern.compile(
       "\\b(?:(HDFC|ICICI|SBM|Axis|Kotak|IDFC FIRST|IndusInd|Yes|Federal|Canara|Union|Punjab National|AU Small Finance)"
-          + "\\s+Bank|(State Bank of India|Bank of Baroda|SBI))\\b",
+          + "\\s+Bank|(State Bank of India|Bank of Baroda|SBI|Indian Bank))\\b",
       I);
 
   private SmsParser() {}
@@ -96,13 +128,22 @@ public final class SmsParser {
   public static Result parse(String body, String sender, LocalDate received) {
     String text = body == null ? "" : body.replaceAll("\\s+", " ").trim();
     if (text.isEmpty()) return new Unreadable("Empty message");
-    if (!DEBIT.matcher(text).find()) return new Skip("Not a debit message");
-    for (var rule : NOT_A_DEBIT) {
+    Direction direction = direction(text);
+    if (direction == null) return new Skip("Not a debit or credit");
+    for (var rule : NOT_A_TRANSACTION) {
       if (rule.getKey().matcher(text).find()) return new Skip(rule.getValue());
+    }
+    boolean credit = direction == Direction.CREDIT;
+    if (credit) {
+      for (var rule : NOT_A_CREDIT) {
+        if (rule.getKey().matcher(text).find()) return new Skip(rule.getValue());
+      }
+      if (!MONEY_CONTEXT.matcher(text).find()) return new Skip("Not a bank credit");
     }
 
     Matcher amount = AMOUNT.matcher(text);
-    if (!amount.find()) return new Unreadable("No amount found");
+    // "received" also appears in non-bank texts; without an amount there is nothing to record.
+    if (!amount.find()) return credit ? new Skip("Credit without an amount") : new Unreadable("No amount found");
     String value = amount.group(1).replace(",", "");
 
     LocalDate date = dateIn(text, received).orElse(received);
@@ -113,11 +154,18 @@ public final class SmsParser {
     String upiRef = hasUpiPath ? upiPath.group(1) : ref(text);
     Matcher card = CARD.matcher(text);
     String cardLast4 = card.find() ? card.group(1) : null;
+    Category hint = credit ? creditHint(text) : null;
 
     String payee = hasUpiPath ? cleanPayee(upiPath.group(2)) : null;
-    if (payee == null) payee = payee(text);
-    if (payee == null) payee = NarrationParser.parse(text).merchant();
-    if (payee == null || !LETTER.matcher(payee).find()) return new Unreadable("No payee found");
+    if (credit) {
+      if (payee == null) payee = sender(text);
+      // A credit is worth keeping even when the sender is not named.
+      if (payee == null) payee = hint == null ? "Money received" : hint == Category.REFUND_CASHBACK ? "Refund" : hint.label();
+    } else {
+      if (payee == null) payee = payee(text);
+      if (payee == null) payee = NarrationParser.parse(text).merchant();
+      if (payee == null || !LETTER.matcher(payee).find()) return new Unreadable("No payee found");
+    }
 
     Map<String, Object> fields = new LinkedHashMap<>();
     fields.put("date", date.toString());
@@ -127,7 +175,58 @@ public final class SmsParser {
     fields.put("paymentMethod", method(text, cardLast4, upiRef));
     fields.put("cardLast4", cardLast4);
     fields.put("upiRef", upiRef);
-    return new Debit(fields);
+    fields.put("direction", direction.json());
+    if (hint != null) fields.put("category", hint.label());
+    return new Parsed(fields);
+  }
+
+  /**
+   * Whichever comes first decides: "Acct XX123 debited for Rs 500; RAHUL credited" is a debit, "A/c XX123 credited
+   * with Rs 500 ... sent by RAHUL" a credit.
+   */
+  private static Direction direction(String text) {
+    Matcher debit = DEBIT.matcher(text);
+    Matcher credit = CREDIT.matcher(text);
+    int d = debit.find() ? debit.start() : Integer.MAX_VALUE;
+    int c = credit.find() ? credit.start() : Integer.MAX_VALUE;
+    if (d == Integer.MAX_VALUE && c == Integer.MAX_VALUE) return null;
+    return c < d ? Direction.CREDIT : Direction.DEBIT;
+  }
+
+  private static Category creditHint(String text) {
+    for (var hint : CREDIT_HINTS) {
+      if (hint.getKey().matcher(text).find()) return hint.getValue();
+    }
+    return null;
+  }
+
+  // Tried in order: "Deposit by transfer from SIDDHANT ANAND" must give the name after "from", not after "by".
+  private static String sender(String text) {
+    String best = null;
+    for (Pattern p : SENDER) {
+      Matcher m = p.matcher(text);
+      while (best == null && m.find()) {
+        String name = cleanPayee(m.group(1));
+        if (name != null && !NOT_A_NAME.matcher(name).find()) best = name;
+      }
+      if (best != null) break;
+    }
+    if (best != null && best.matches(".*[/-].*")) {
+      String fromNarration = NarrationParser.parse(best).merchant();
+      if (fromNarration != null) {
+        best = fromNarration;
+      } else {
+        String[] parts = best.split("[/-]");
+        for (int i = parts.length - 1; i >= 0; i--) {
+          String part = cleanPayee(parts[i]);
+          if (part != null && part.matches("(?i).*[a-z]{3}.*") && !part.matches("(?i)[a-z]{4}\\w*\\d\\w*")) {
+            best = part;
+            break;
+          }
+        }
+      }
+    }
+    return best;
   }
 
   /** Accepts YYYY-MM-DD or an ISO timestamp; timestamps are converted to Indian time before taking the date. */

@@ -9,6 +9,7 @@ public record Transaction(
     LocalDate date,
     double amount,
     String currency,
+    Direction direction,
     String reason,
     String merchant,
     String paymentMethod,
@@ -22,6 +23,10 @@ public record Transaction(
 
   public long amountMinor() {
     return Math.round(amount * 100);
+  }
+
+  public boolean isCredit() {
+    return direction == Direction.CREDIT;
   }
 
   /** Display name used for grouping: the parsed merchant, else the raw reason. */

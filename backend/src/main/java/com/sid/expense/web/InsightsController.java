@@ -6,6 +6,7 @@ import com.sid.expense.domain.Banks;
 import com.sid.expense.domain.Category;
 import com.sid.expense.domain.Dates;
 import com.sid.expense.domain.Dates.Period;
+import com.sid.expense.domain.Direction;
 import com.sid.expense.repo.AnalysisRepository;
 import com.sid.expense.repo.AnalysisRepository.StoredAnalysis;
 import com.sid.expense.repo.TransactionRepository;
@@ -29,7 +30,8 @@ public class InsightsController {
 
   record Health(boolean ok, boolean ai) {}
 
-  record Categories(List<String> categories) {}
+  /** {@code categories} are for debits (as before), {@code creditCategories} for money coming in. */
+  record Categories(List<String> categories, List<String> creditCategories) {}
 
   record BankList(List<String> banks) {}
 
@@ -62,7 +64,7 @@ public class InsightsController {
 
   @GetMapping("/api/categories")
   public Categories categories() {
-    return new Categories(Category.labels());
+    return new Categories(Category.labels(Direction.DEBIT), Category.labels(Direction.CREDIT));
   }
 
   @GetMapping("/api/banks")

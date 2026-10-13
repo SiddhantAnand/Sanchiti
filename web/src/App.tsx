@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CircleHelp, Inbox, Landmark, LayoutDashboard, LoaderCircle, LogOut, ReceiptText, Settings as SettingsIcon, Sparkles } from 'lucide-react';
-import { api, setUnauthorizedHandler, type Me, type ReviewItem, type Transaction } from './api';
-import { PERIODS, greeting, initials, period as makePeriod, rangeLabel, type PeriodKey } from './format';
+import { api, setUnauthorizedHandler, type Direction, type Me, type ReviewItem, type Transaction } from './api';
+import {
+  MONTHS, PERIODS, greeting, initials, isPeriodKey, period as makePeriod, periodParts, rangeLabel, type PeriodKey,
+} from './format';
 import { GeminiModal } from './GeminiModal';
 import { TxDrawer, type DrawerMode } from './TxDrawer';
 import { Banks } from './pages/Banks';
@@ -16,11 +18,14 @@ import { Transactions } from './pages/Transactions';
 type Route = 'overview' | 'transactions' | 'banks' | 'review' | 'insights' | 'settings' | 'help';
 const ROUTES: Route[] = ['overview', 'transactions', 'banks', 'review', 'insights', 'settings', 'help'];
 
-function parseHash(): { route: Route; category: string; bank: string; kind: string } {
+function parseHash(): { route: Route; category: string; bank: string; kind: string; direction: Direction } {
   const [path, query] = window.location.hash.replace(/^#\/?/, '').split('?');
   const route = (ROUTES as string[]).includes(path) ? (path as Route) : 'overview';
   const params = new URLSearchParams(query);
-  return { route, category: params.get('category') ?? '', bank: params.get('bank') ?? '', kind: params.get('kind') ?? '' };
+  return {
+    route, category: params.get('category') ?? '', bank: params.get('bank') ?? '', kind: params.get('kind') ?? '',
+    direction: params.get('direction') === 'credit' ? 'credit' : 'debit',
+  };
 }
 
 type Auth = { state: 'loading' } | { state: 'out' } | { state: 'in'; me: Me };
@@ -43,17 +48,22 @@ export default function App() {
 }
 
 function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me) => void; onSignedOut: () => void }) {
-  const [{ route, category, bank, kind }, setLocation] = useState(parseHash);
-  const [periodKey, setPeriodKey] = useState<PeriodKey>(() => (localStorage.getItem('period') as PeriodKey) || 'month');
+  const [{ route, category, bank, kind, direction }, setLocation] = useState(parseHash);
+  const [periodKey, setPeriodKey] = useState<PeriodKey>(() => {
+    const saved = localStorage.getItem('period');
+    return isPeriodKey(saved) ? saved : 'month';
+  });
   const [refreshKey, setRefreshKey] = useState(0);
   const [ai, setAi] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
+  const [creditCategories, setCreditCategories] = useState<string[]>([]);
+  const [firstYear, setFirstYear] = useState(new Date().getFullYear());
   const [banks, setBanks] = useState<string[]>([]);
   const [reviewCount, setReviewCount] = useState(0);
   const [drawer, setDrawer] = useState<DrawerMode | null>(null);
   const [gemini, setGemini] = useState(false);
 
-  const period = makePeriod(PERIODS.some((p) => p.key === periodKey) ? periodKey : 'month');
+  const period = makePeriod(periodKey);
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
@@ -64,11 +74,12 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
   useEffect(() => localStorage.setItem('period', periodKey), [periodKey]);
   useEffect(() => {
     api.health().then((h) => setAi(h.ai)).catch(() => {});
-    api.categories().then((c) => setCategories(c.categories)).catch(() => {});
+    api.categories().then((c) => { setCategories(c.categories); setCreditCategories(c.creditCategories); }).catch(() => {});
     api.banks().then((b) => setBanks(b.banks)).catch(() => {});
   }, []);
   useEffect(() => {
     api.review().then((r) => setReviewCount(r.items.length)).catch(() => {});
+    api.span().then((s) => s.first && setFirstYear(Number(s.first.slice(0, 4)))).catch(() => {});
   }, [refreshKey]);
 
   const go = (r: string) => { window.location.hash = `/${r}`; };
@@ -80,9 +91,9 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
 
   const first = me.name.split(/\s+/)[0];
   const titles: Record<Route, [string, string]> = {
-    overview: [`${greeting()}, ${first}`, `Here's where your money went · ${rangeLabel(period.from, period.to)}`],
-    transactions: ['Transactions', `Every spend, editable · ${rangeLabel(period.from, period.to)}`],
-    banks: ['Banks', `Everything that left each account · ${rangeLabel(period.from, period.to)}`],
+    overview: [`${greeting()}, ${first}`, `Money in and out · ${rangeLabel(period.from, period.to)}`],
+    transactions: ['Transactions', `Every debit and credit, editable · ${rangeLabel(period.from, period.to)}`],
+    banks: ['Banks', `Money in and out of each account · ${rangeLabel(period.from, period.to)}`],
     review: ['Review queue', 'Bank SMS that could not be filed on their own'],
     insights: ['Insights', 'Weekly read on your spending, written by Gemini'],
     settings: ['Settings', me.admin ? 'Password, backup, Gemini and people you invite' : 'Password and backup'],
@@ -148,6 +159,7 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
                 ))}
               </div>
             )}
+            {showPeriod && <MonthPicker periodKey={periodKey} firstYear={firstYear} onPick={setPeriodKey} />}
             <button className="btn btn-gemini" disabled={!ai} onClick={() => setGemini(true)} title={ai ? '' : 'Gemini is not configured'}>
               <Sparkles size={16} /> Send to Gemini
             </button>
@@ -159,9 +171,10 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
             onOpenCategory={(c) => { window.location.hash = `/transactions?category=${encodeURIComponent(c)}`; }} />
         )}
         {route === 'transactions' && (
-          <Transactions key={`${category}|${bank}|${kind}`} period={period} refreshKey={refreshKey} categories={categories}
-            initialCategory={category} initialBank={bank} initialKind={kind}
-            aiEnabled={ai} onChanged={refresh} onAdd={() => setDrawer({ kind: 'add' })}
+          <Transactions key={`${category}|${bank}|${kind}|${direction}`} period={period} refreshKey={refreshKey}
+            categories={categories} creditCategories={creditCategories}
+            initialCategory={category} initialBank={bank} initialKind={kind} initialDirection={direction}
+            aiEnabled={ai} onChanged={refresh} onAdd={(d) => setDrawer({ kind: 'add', direction: d })}
             onEdit={(tx: Transaction) => setDrawer({ kind: 'edit', tx })} />
         )}
         {route === 'banks' && <Banks period={period} refreshKey={refreshKey} />}
@@ -174,10 +187,44 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
       </main>
 
       {drawer && (
-        <TxDrawer mode={drawer} categories={categories} banks={banks} aiEnabled={ai}
+        <TxDrawer mode={drawer} categories={categories} creditCategories={creditCategories} banks={banks} aiEnabled={ai}
           onClose={() => setDrawer(null)} onSaved={() => { setDrawer(null); refresh(); }} />
       )}
       {gemini && <GeminiModal onClose={() => setGemini(false)} onDone={refresh} />}
+    </div>
+  );
+}
+
+/** Year + month dropdowns; "All months" picks the whole year. A preset button clears them. */
+function MonthPicker({ periodKey, firstYear, onPick }: {
+  periodKey: PeriodKey; firstYear: number; onPick: (key: PeriodKey) => void;
+}) {
+  const now = new Date();
+  const { year, month } = periodParts(periodKey);
+  const lastYear = now.getFullYear();
+  const years = Array.from({ length: Math.max(1, lastYear - Math.min(firstYear, lastYear) + 1) }, (_, i) => lastYear - i);
+  const shownYear = year ?? lastYear;
+  const pickMonth = (m: number | null) => onPick(m ? `m:${shownYear}-${String(m).padStart(2, '0')}` : `y:${shownYear}`);
+
+  return (
+    <div className={`month-picker ${year !== null ? 'on' : ''}`}>
+      <select className="select" aria-label="Month" value={month ?? (year !== null ? 'all' : '')}
+        onChange={(e) => pickMonth(e.target.value === 'all' ? null : Number(e.target.value))}>
+        {year === null && <option value="" disabled>Month</option>}
+        <option value="all">All months</option>
+        {MONTHS.map((name, i) => (
+          <option key={name} value={i + 1} disabled={shownYear === lastYear && i > now.getMonth()}>{name}</option>
+        ))}
+      </select>
+      <select className="select" aria-label="Year" value={year ?? ''}
+        onChange={(e) => {
+          const y = Number(e.target.value);
+          const m = month && !(y === lastYear && month > now.getMonth() + 1) ? month : null;
+          onPick(m ? `m:${y}-${String(m).padStart(2, '0')}` : `y:${y}`);
+        }}>
+        {year === null && <option value="" disabled>Year</option>}
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
     </div>
   );
 }

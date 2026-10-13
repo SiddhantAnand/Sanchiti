@@ -3,6 +3,7 @@ package com.sid.expense.web;
 import com.sid.expense.config.AppProperties;
 import com.sid.expense.domain.Category;
 import com.sid.expense.domain.Dates;
+import com.sid.expense.domain.Direction;
 import com.sid.expense.domain.SmsParser;
 import com.sid.expense.domain.Transaction;
 import com.sid.expense.domain.TransactionInput;
@@ -48,7 +49,8 @@ public class TransactionController {
 
   private static final int MAX_BATCH = 500;
   private static final Set<String> EDITABLE = Set.of(
-      "date", "amount", "reason", "currency", "bankName", "paymentMethod", "cardLast4", "upiRef", "note", "category");
+      "date", "amount", "reason", "currency", "bankName", "paymentMethod", "cardLast4", "upiRef", "note", "category",
+      "direction");
 
   record ReviewNote(int index, String issue) {}
 
@@ -107,7 +109,8 @@ public class TransactionController {
 
   /**
    * Accepts raw bank SMS as {@code {"messages": [{body, sender?, received?}]}} (or a bare array) and reads them with
-   * {@link SmsParser}. Non-debits are skipped, unreadable ones go to review. {@code dryRun=true} saves nothing.
+   * {@link SmsParser}. Debits and credits are saved, anything else is skipped, unreadable ones go to review.
+   * {@code dryRun=true} saves nothing.
    */
   @PostMapping("/sms")
   public ResponseEntity<SmsResponse> fromSms(
@@ -138,16 +141,16 @@ public class TransactionController {
           forReview.add(new ReviewRepository.Pending(sms, "SMS: " + unreadable.why()));
           review.add(new ReviewNote(i, "SMS: " + unreadable.why()));
         }
-        case SmsParser.Debit debit -> {
-          parsed.add(new ParsedNote(i, debit.fields()));
-          var checked = service.check(debit.fields());
+        case SmsParser.Parsed read -> {
+          parsed.add(new ParsedNote(i, read.fields()));
+          var checked = service.check(read.fields());
           if (checked.issue() == null) {
             valid.add(checked.input());
             validIndexes.add(i);
           } else {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("sms", sms);
-            payload.put("parsed", debit.fields());
+            payload.put("parsed", read.fields());
             forReview.add(new ReviewRepository.Pending(payload, checked.issue()));
             review.add(new ReviewNote(i, checked.issue()));
           }
@@ -214,6 +217,7 @@ public class TransactionController {
       @RequestParam(required = false) String q,
       @RequestParam(required = false) String bank,
       @RequestParam(required = false) String kind,
+      @RequestParam(required = false) String direction,
       @RequestParam(defaultValue = "100") int limit,
       @RequestParam(defaultValue = "0") int offset) {
     if (category != null && !Category.UNCATEGORIZED.equals(category) && Category.fromLabel(category).isEmpty()) {
@@ -222,6 +226,8 @@ public class TransactionController {
     if (kind != null && !TransactionRepository.KINDS.contains(kind)) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "kind must be one of " + TransactionRepository.KINDS);
     }
+    Direction dir = direction == null || direction.isBlank() ? null : Direction.parse(direction)
+        .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "direction must be debit or credit"));
     if (bank != null && bank.length() > 80) throw new ApiException(HttpStatus.BAD_REQUEST, "bank is too long");
     String cur = currency == null ? null : currency.trim().toUpperCase(Locale.ROOT);
     if (cur != null && !cur.matches("[A-Z]{3}")) throw new ApiException(HttpStatus.BAD_REQUEST, "Invalid currency");
@@ -233,7 +239,13 @@ public class TransactionController {
     long[] amount = search == null ? null : amountRange(search);
     return repo.list(user.id(), new Filter(date(from, "from"), date(to, "to"), category, cur,
         amount == null ? search : null, amount == null ? null : amount[0], amount == null ? null : amount[1],
-        bank == null || bank.isBlank() ? null : bank.trim(), kind, limit, offset));
+        bank == null || bank.isBlank() ? null : bank.trim(), kind, dir, limit, offset));
+  }
+
+  /** Oldest and newest transaction dates, for the month and year pickers. */
+  @GetMapping("/span")
+  public TransactionRepository.Span span(@RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user) {
+    return repo.span(user.id());
   }
 
   private static final String NUMBER = "(\\d+(?:\\.\\d{1,2})?)";
@@ -285,6 +297,14 @@ public class TransactionController {
     }
     Transaction tx = uuid(id).flatMap(u -> repo.findById(user.id(), u))
         .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Transaction not found"));
+    Direction direction = tx.direction();
+    if (patch.get("direction") != null) {
+      direction = patch.get("direction") instanceof String s ? Direction.parse(s).orElse(null) : null;
+      if (direction == null) throw new ApiException(HttpStatus.BAD_REQUEST, "direction must be debit or credit");
+    }
+    if (category != null && !category.fits(direction)) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, category.label() + " is not a " + direction.json() + " category");
+    }
 
     if (patch.keySet().stream().anyMatch(k -> !"category".equals(k))) {
       Map<String, Object> merged = new HashMap<>();
@@ -299,12 +319,14 @@ public class TransactionController {
       merged.put("note", tx.note());
       patch.forEach((k, v) -> merged.put(String.valueOf(k), v));
       merged.remove("category");
+      merged.put("direction", direction.json());
       var checked = service.check(merged);
       if (checked.issue() != null) throw new ApiException(HttpStatus.BAD_REQUEST, checked.issue());
       service.edit(user.id(), user.name(), tx, checked.input());
     }
-    if (category != null) service.setCategory(user.id(), tx.id(), category);
-    else if (patch.containsKey("category")) service.clearCategory(user.id(), tx.id());
+    Transaction current = repo.findById(user.id(), tx.id()).orElseThrow();
+    if (category != null) service.setCategory(user.id(), current, category);
+    else if (patch.containsKey("category")) service.clearCategory(user.id(), user.name(), current);
     if (props.categorizeOnIngest() && category == null) categorizer.categorizePendingQuietly(user.id());
     return repo.findById(user.id(), tx.id()).orElseThrow();
   }

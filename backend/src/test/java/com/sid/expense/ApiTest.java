@@ -354,6 +354,97 @@ class ApiTest {
   }
 
   @Test
+  void remembersHandSetCategoryForTheNextPaymentToTheSamePayee() throws Exception {
+    String sms = """
+        [{"received": "%s", "sender": "HDFCBK",
+          "body": "Sent Rs.%s From HDFC Bank A/C *1122 To RAMESH KIRANA On %s Ref %s"}]""";
+    String body = postSms(sms.formatted("2026-10-01", "120.00", "01/10/26", "660000000101"), "test-phone-key")
+        .andReturn().getResponse().getContentAsString();
+    String id = JSON.readTree(body).get("inserted").get(0).get("id").asString();
+    patchTx(id, "{\"category\": \"Groceries\"}").andExpect(status().isOk());
+    ai.calls.clear();
+
+    postSms(sms.formatted("2026-10-05", "80.00", "05/10/26", "660000000102"), "test-phone-key")
+        .andExpect(jsonPath("$.inserted[0].category").value("Groceries"))
+        .andExpect(jsonPath("$.inserted[0].categorySource").value("manual"));
+    assertThat(ai.calls).isEmpty();
+  }
+
+  @Test
+  void readsCreditSmsAndKeepsThemOutOfSpending() throws Exception {
+    String body = """
+        [{"received": "2026-10-05", "sender": "VM-HDFCBK",
+          "body": "Rs.2,000.00 credited to HDFC Bank A/c XX1122 on 05-10-26 from VPA rahul@oksbi (UPI 450000000041)"},
+         {"received": "2026-10-05", "sender": "SBMBNK", "body": "Rs.200 credited to your a/c XX9001. Refund from Swiggy."},
+         {"received": "2026-10-05", "sender": "VM-HDFCBK",
+          "body": "Sent Rs.500.00 From HDFC Bank A/C *1122 To SWIGGY On 05/10/26 Ref 660000000041"}]""";
+    postSms(body, "test-phone-key")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted[0].direction").value("credit"))
+        .andExpect(jsonPath("$.inserted[0].category").value("Received"))
+        .andExpect(jsonPath("$.inserted[1].category").value("Refund & Cashback"))
+        .andExpect(jsonPath("$.inserted[2].direction").value("debit"))
+        .andExpect(jsonPath("$.inserted[2].category").value("Food & Dining"));
+    // Credits never go to Gemini.
+    assertThat(ai.calls).containsExactly("categorize");
+
+    mvc.perform(authed(get("/api/summary?from=2026-10-01&to=2026-10-07")))
+        .andExpect(jsonPath("$.total").value(500.0))
+        .andExpect(jsonPath("$.count").value(1))
+        .andExpect(jsonPath("$.received").value(2200.0))
+        .andExpect(jsonPath("$.receivedCount").value(2))
+        .andExpect(jsonPath("$.net").value(1700.0))
+        .andExpect(jsonPath("$.receivedByCategory[0].category").value("Received"))
+        .andExpect(jsonPath("$.largestReceived[0].amount").value(2000.0))
+        .andExpect(jsonPath("$.creditedByBank[*].bank", containsInAnyOrder("HDFC Bank", "SBM Bank India")));
+
+    String list = "/api/transactions?from=2026-10-01&to=2026-10-07&direction=";
+    mvc.perform(authed(get(list + "credit"))).andExpect(jsonPath("$.total").value(2));
+    mvc.perform(authed(get(list + "debit"))).andExpect(jsonPath("$.items[*].amount", contains(500.0)));
+    mvc.perform(authed(get(list + "sideways"))).andExpect(status().isBadRequest());
+    mvc.perform(authed(get("/api/transactions/span")))
+        .andExpect(jsonPath("$.first").value("2026-10-05")).andExpect(jsonPath("$.last").value("2026-10-05"));
+  }
+
+  @Test
+  void pairsBothSidesOfAMoveBetweenOwnAccounts() throws Exception {
+    postTx("""
+        [{"date": "2026-10-04", "amount": 24600, "reason": "SIDDHANT ANAND", "bankName": "HDFC"},
+         {"date": "2026-10-04", "amount": 24600, "reason": "a/c XX0001", "bankName": "ICICI", "direction": "credit"},
+         {"date": "2026-10-04", "amount": 999, "reason": "Rahul", "bankName": "ICICI", "direction": "credit"}]""")
+        .andExpect(jsonPath("$.inserted[0].category").value("Self Transfer"))
+        .andExpect(jsonPath("$.inserted[1].category").value("Self Transfer"))
+        .andExpect(jsonPath("$.inserted[2].category").value("Received"));
+    mvc.perform(authed(get("/api/summary?from=2026-10-01&to=2026-10-07")))
+        .andExpect(jsonPath("$.total").value(0.0))
+        .andExpect(jsonPath("$.received").value(999.0))
+        .andExpect(jsonPath("$.ownTransfersIn").value(24600.0))
+        .andExpect(jsonPath("$.creditedByBank[0].ownTransfers").value(24600.0));
+  }
+
+  @Test
+  void flipsDirectionAndKeepsCategoriesOnTheRightSide() throws Exception {
+    String body = postTx("""
+        {"date": "2026-10-02", "amount": 300, "reason": "Puff corner"}""").andReturn().getResponse().getContentAsString();
+    String id = JSON.readTree(body).get("inserted").get(0).get("id").asString();
+
+    patchTx(id, "{\"category\": \"Salary\"}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.error").value(containsString("Salary is not a debit category")));
+    patchTx(id, "{\"direction\": \"credit\"}")
+        .andExpect(jsonPath("$.direction").value("credit"))
+        .andExpect(jsonPath("$.category").value("Received"));
+    patchTx(id, "{\"category\": \"Refund & Cashback\"}").andExpect(jsonPath("$.category").value("Refund & Cashback"));
+    postTx("""
+        {"date": "2026-10-03", "amount": 50, "reason": "x", "category": "Groceries", "direction": "credit"}""")
+        .andExpect(status().isBadRequest());
+    mvc.perform(authed(get("/api/categories")))
+        .andExpect(jsonPath("$.creditCategories", contains("Self Transfer", "Salary", "Refund & Cashback", "Interest",
+            "Received")))
+        .andExpect(jsonPath("$.categories", not(org.hamcrest.Matchers.hasItem("Salary"))));
+  }
+
+  @Test
   void detectsSamePaymentReportedByAnotherSource() throws Exception {
     postTx("""
         [{"date": "2026-10-08", "amount": 195, "reason": "Debit - HDFC Bank A/C 1122 to APPLE MEDIA SERVICES"},

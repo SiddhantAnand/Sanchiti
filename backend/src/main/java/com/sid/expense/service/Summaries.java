@@ -33,14 +33,26 @@ public final class Summaries {
       /** Transfers to the user's own accounts and credit-card bill payments, kept out of {@code total}. */
       double ownTransfers,
       int ownTransferCount,
+      /** Credits (salary, refunds, interest, money from others), excluding money from the user's own accounts. */
+      double received,
+      int receivedCount,
+      /** Credits that came from the user's own accounts, kept out of {@code received}. */
+      double ownTransfersIn,
+      /** {@code received} minus spending and investments. */
+      double net,
       List<CategoryTotal> byCategory,
+      /** What came in, by credit category, excluding own transfers. */
+      List<CategoryTotal> receivedByCategory,
       List<BankTotal> byBank,
       /** Everything debited per bank, including investments and own transfers. */
       List<BankDeductions> deductedByBank,
+      /** Everything credited per bank, including money from the user's own accounts. */
+      List<BankReceipts> creditedByBank,
       /** UPI / CARD / AUTOPAY / ... as sent or parsed; UNKNOWN when neither says. */
       List<MethodTotal> byPaymentMethod,
       List<DailyTotal> daily,
       List<Largest> largest,
+      List<Largest> largestReceived,
       List<PayeeTotal> frequentPayees,
       int uncategorizedCount,
       /** Non-INR spends are reported separately; they are not converted or added to {@code total}. */
@@ -52,6 +64,8 @@ public final class Summaries {
 
   public record BankDeductions(
       String bank, double total, int count, double spent, double invested, double ownTransfers) {}
+
+  public record BankReceipts(String bank, double total, int count, double received, double ownTransfers) {}
 
   public record MethodTotal(String method, double total, int count) {}
 
@@ -74,8 +88,15 @@ public final class Summaries {
 
   private Summaries() {}
 
-  public static Summary summarize(List<Transaction> txs, LocalDate from, LocalDate to) {
+  public static Summary summarize(List<Transaction> all, LocalDate from, LocalDate to) {
+    List<Transaction> txs = all.stream().filter(t -> !t.isCredit()).toList();
     List<Transaction> inr = txs.stream().filter(t -> TransactionInput.BASE_CURRENCY.equals(t.currency())).toList();
+    List<Transaction> creditsInr = all.stream()
+        .filter(t -> t.isCredit() && TransactionInput.BASE_CURRENCY.equals(t.currency()))
+        .toList();
+    List<Transaction> ownIn = creditsInr.stream().filter(Summaries::isOwnTransfer).toList();
+    List<Transaction> receivedRows = creditsInr.stream().filter(t -> !isOwnTransfer(t)).toList();
+    long receivedMinor = receivedRows.stream().mapToLong(Transaction::amountMinor).sum();
     List<Transaction> investments = inr.stream().filter(Summaries::isInvestment).toList();
     List<Transaction> own = inr.stream().filter(t -> t.category() != null && t.category().isOwnTransfer()).toList();
     List<Transaction> base = inr.stream()
@@ -94,6 +115,7 @@ public final class Summaries {
 
     Map<String, String> firstPayee = new LinkedHashMap<>();
     for (Transaction t : base) firstPayee.putIfAbsent(Texts.normalizeReason(t.payee()), t.payee());
+    long investedMinor = investments.stream().mapToLong(Transaction::amountMinor).sum();
 
     return new Summary(
         from,
@@ -102,27 +124,33 @@ public final class Summaries {
         major(totalMinor),
         base.size(),
         Math.round((double) totalMinor / days) / 100.0,
-        major(investments.stream().mapToLong(Transaction::amountMinor).sum()),
+        major(investedMinor),
         investments.size(),
         major(own.stream().mapToLong(Transaction::amountMinor).sum()),
         own.size(),
+        major(receivedMinor),
+        receivedRows.size(),
+        major(ownIn.stream().mapToLong(Transaction::amountMinor).sum()),
+        major(receivedMinor - totalMinor - investedMinor),
         group(base, t -> t.category() == null ? Category.UNCATEGORIZED : t.category().label()).stream()
             .map(g -> new CategoryTotal(g.label(), major(g.totalMinor()), g.count(),
                 totalMinor == 0 ? 0 : round1(g.totalMinor() * 100.0 / totalMinor)))
+            .toList(),
+        group(receivedRows, t -> t.category() == null ? Category.RECEIVED.label() : t.category().label()).stream()
+            .map(g -> new CategoryTotal(g.label(), major(g.totalMinor()), g.count(),
+                receivedMinor == 0 ? 0 : round1(g.totalMinor() * 100.0 / receivedMinor)))
             .toList(),
         group(base.stream().filter(t -> t.bank() != null).toList(), Transaction::bank).stream()
             .map(g -> new BankTotal(g.label(), major(g.totalMinor()), g.count()))
             .toList(),
         deductedByBank(inr),
+        creditedByBank(creditsInr),
         group(base, t -> t.paymentMethod() == null ? "UNKNOWN" : t.paymentMethod()).stream()
             .map(g -> new MethodTotal(g.label(), major(g.totalMinor()), g.count()))
             .toList(),
         daily,
-        base.stream()
-            .sorted(Comparator.comparingLong(Transaction::amountMinor).reversed())
-            .limit(5)
-            .map(t -> new Largest(t.date(), t.amount(), t.payee(), t.category()))
-            .toList(),
+        largest(base),
+        largest(receivedRows),
         group(base, t -> Texts.normalizeReason(t.payee())).stream()
             .filter(g -> g.count() > 1)
             .sorted(Comparator.comparingInt(Group::count).reversed()
@@ -160,6 +188,30 @@ public final class Summaries {
         major(minor(current.total()) - minor(previous.total())),
         previous.total() == 0 ? null : round1((current.total() - previous.total()) / previous.total() * 100),
         changes);
+  }
+
+  private static List<Largest> largest(List<Transaction> rows) {
+    return rows.stream()
+        .sorted(Comparator.comparingLong(Transaction::amountMinor).reversed())
+        .limit(5)
+        .map(t -> new Largest(t.date(), t.amount(), t.payee(), t.category()))
+        .toList();
+  }
+
+  private static List<BankReceipts> creditedByBank(List<Transaction> credits) {
+    return group(credits, t -> t.bank() == null ? UNKNOWN_BANK : t.bank()).stream()
+        .map(g -> {
+          long own = credits.stream()
+              .filter(t -> g.label().equals(t.bank() == null ? UNKNOWN_BANK : t.bank()) && isOwnTransfer(t))
+              .mapToLong(Transaction::amountMinor)
+              .sum();
+          return new BankReceipts(g.label(), major(g.totalMinor()), g.count(), major(g.totalMinor() - own), major(own));
+        })
+        .toList();
+  }
+
+  private static boolean isOwnTransfer(Transaction t) {
+    return t.category() != null && t.category().isOwnTransfer();
   }
 
   private static List<BankDeductions> deductedByBank(List<Transaction> inr) {

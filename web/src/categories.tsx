@@ -1,7 +1,7 @@
 import {
-  ArrowLeftRight, Car, CircleQuestionMark, Clapperboard, CreditCard, Ellipsis, Fuel, Gift, GraduationCap, HeartPulse,
-  House, Landmark, PiggyBank, Plane, Receipt, Repeat, Scissors, ShoppingBag, ShoppingBasket, Utensils, Zap,
-  type LucideIcon,
+  ArrowLeftRight, BriefcaseBusiness, Car, CircleQuestionMark, Clapperboard, CreditCard, Ellipsis, Fuel, Gift,
+  GraduationCap, HandCoins, HeartPulse, House, Landmark, Percent, PiggyBank, Plane, Receipt, Repeat, Scissors,
+  ShoppingBag, ShoppingBasket, Undo2, Utensils, Zap, type LucideIcon,
 } from 'lucide-react';
 
 export const UNCATEGORIZED = 'Uncategorized';
@@ -30,6 +30,10 @@ const META: Record<string, Meta> = {
   'Card Bill Payment': { color: '#60A5FA', icon: CreditCard },
   'Fees & Charges': { color: '#F87171', icon: Receipt },
   Other: { color: '#7C86A2', icon: Ellipsis },
+  Salary: { color: '#22C55E', icon: BriefcaseBusiness },
+  'Refund & Cashback': { color: '#14B8A6', icon: Undo2 },
+  Interest: { color: '#EAB308', icon: Percent },
+  Received: { color: '#10B981', icon: HandCoins },
   [UNCATEGORIZED]: { color: '#4B5574', icon: CircleQuestionMark },
 };
 

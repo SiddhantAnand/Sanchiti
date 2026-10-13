@@ -111,14 +111,14 @@ export function Empty({ icon, title, children }: { icon: ReactNode; title: strin
   );
 }
 
-/** Change in spending: going up is shown as bad (rose), going down as good (teal). */
-export function Delta({ current, previous }: { current: number; previous: number }) {
+/** Change in spending: going up is shown as bad (rose), going down as good (teal). {@code goodUp} flips it for income. */
+export function Delta({ current, previous, goodUp = false }: { current: number; previous: number; goodUp?: boolean }) {
   if (previous === 0) return <span className="delta flat">new</span>;
   const pct = ((current - previous) / previous) * 100;
   if (Math.abs(pct) < 0.5) return <span className="delta flat">±0%</span>;
   const up = pct > 0;
   return (
-    <span className={`delta ${up ? 'up' : 'down'}`}>
+    <span className={`delta ${up !== goodUp ? 'up' : 'down'}`}>
       {up ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
       {Math.abs(pct) >= 100 ? Math.round(Math.abs(pct)) : Math.abs(pct).toFixed(1)}%
     </span>

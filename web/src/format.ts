@@ -46,10 +46,12 @@ export function rangeLabel(from: string, to: string) {
   return `${fa} – ${fb}`;
 }
 
-export type PeriodKey = '7d' | '30d' | 'month' | 'lastMonth' | '90d' | 'ytd';
+export type PresetKey = '7d' | '30d' | 'month' | 'lastMonth' | '90d' | 'ytd';
+/** A preset, a calendar month ("m:2026-09") or a whole year ("y:2026"). */
+export type PeriodKey = PresetKey | `m:${string}` | `y:${string}`;
 export type Period = { key: PeriodKey; label: string; from: string; to: string; prevFrom: string; prevTo: string };
 
-export const PERIODS: { key: PeriodKey; label: string }[] = [
+export const PERIODS: { key: PresetKey; label: string }[] = [
   { key: '7d', label: '7D' },
   { key: '30d', label: '30D' },
   { key: 'month', label: 'This month' },
@@ -58,11 +60,49 @@ export const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: 'ytd', label: 'YTD' },
 ];
 
+export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const MONTH_KEY = /^m:(\d{4})-(\d{2})$/;
+const YEAR_KEY = /^y:(\d{4})$/;
+
+export function isPeriodKey(key: string | null): key is PeriodKey {
+  if (!key) return false;
+  if (PERIODS.some((p) => p.key === key)) return true;
+  const m = key.match(MONTH_KEY);
+  if (m) return Number(m[2]) >= 1 && Number(m[2]) <= 12;
+  return YEAR_KEY.test(key);
+}
+
+/** The year and month (1-12) a month or year key points at; nulls for presets. */
+export function periodParts(key: PeriodKey): { year: number | null; month: number | null } {
+  const m = key.match(MONTH_KEY);
+  if (m) return { year: Number(m[1]), month: Number(m[2]) };
+  const y = key.match(YEAR_KEY);
+  return y ? { year: Number(y[1]), month: null } : { year: null, month: null };
+}
+
 export function period(key: PeriodKey, now = new Date()): Period {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const { year, month } = periodParts(key);
+  if (year !== null) {
+    // A calendar month or year, compared with the one before it; never runs past today.
+    const from = month ? new Date(year, month - 1, 1) : new Date(year, 0, 1);
+    const end = month ? new Date(year, month, 0) : new Date(year, 11, 31);
+    const prevFrom = month ? new Date(year, month - 2, 1) : new Date(year - 1, 0, 1);
+    const prevTo = addDays(from, -1);
+    return {
+      key,
+      label: month ? `${MONTHS[month - 1]} ${year}` : String(year),
+      from: toIso(from),
+      to: toIso(end > today && from <= today ? today : end),
+      prevFrom: toIso(prevFrom),
+      prevTo: toIso(prevTo),
+    };
+  }
+
   let from: Date;
   let to = today;
-  switch (key) {
+  switch (key as PresetKey) {
     case '7d': from = addDays(today, -6); break;
     case '30d': from = addDays(today, -29); break;
     case '90d': from = addDays(today, -89); break;

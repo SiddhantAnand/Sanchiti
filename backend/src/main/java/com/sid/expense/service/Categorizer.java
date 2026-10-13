@@ -3,6 +3,7 @@ package com.sid.expense.service;
 import com.sid.expense.ai.AiClient;
 import com.sid.expense.ai.AiException;
 import com.sid.expense.domain.Category;
+import com.sid.expense.domain.Direction;
 import com.sid.expense.domain.NarrationParser;
 import com.sid.expense.repo.TransactionRepository;
 import com.sid.expense.repo.TransactionRepository.PendingReason;
@@ -42,7 +43,7 @@ public class Categorizer {
           "properties", Map.of(
               "i", Map.of("type", "INTEGER"),
               // Self transfers are recognised from the account holder's name, which Gemini never sees.
-              "category", Map.of("type", "STRING", "enum", Category.labels().stream()
+              "category", Map.of("type", "STRING", "enum", Category.labels(Direction.DEBIT).stream()
                   .filter(l -> !l.equals(Category.SELF_TRANSFER.label())).toList())),
           "required", List.of("i", "category")));
 

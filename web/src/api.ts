@@ -175,6 +175,7 @@ export const api = {
   resolveReview: (id: number, fields: TransactionFields, allowDuplicates = false) =>
     request<Transaction>('POST', `/api/review/${id}/resolve${qs({ allowDuplicates: String(allowDuplicates) })}`, fields),
   discardReview: (id: number) => request<void>('DELETE', `/api/review/${id}`),
+  retryReview: () => request<{ saved: number; alreadySaved: number; remaining: number }>('POST', '/api/review/retry'),
   categorize: () => request<{ categorized: number; pending: number }>('POST', '/api/categorize'),
   runAnalysis: (to?: string, force = false) =>
     request<{ status: string; analysis?: Analysis; reason?: string }>(

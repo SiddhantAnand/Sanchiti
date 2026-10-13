@@ -57,4 +57,8 @@ public class ReviewRepository {
   public boolean delete(long userId, long id) {
     return jdbc.sql("DELETE FROM review WHERE user_id = ? AND id = ?").params(userId, id).update() > 0;
   }
+
+  public void updateIssue(long userId, long id, String issue) {
+    jdbc.sql("UPDATE review SET issue = ? WHERE user_id = ? AND id = ?").params(issue, userId, id).update();
+  }
 }

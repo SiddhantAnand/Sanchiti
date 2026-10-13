@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { CircleCheck, Inbox, Trash, TriangleAlert, Wrench } from 'lucide-react';
+import { CircleCheck, Inbox, LoaderCircle, RefreshCw, Trash, TriangleAlert, Wrench } from 'lucide-react';
 import { api, reviewParts, type ReviewItem } from '../api';
 import { money } from '../format';
 import { Empty, Skeleton, useToast } from '../ui';
@@ -19,10 +19,27 @@ export function Review(props: { refreshKey: number; onFix: (item: ReviewItem) =>
   const toast = useToast();
   const [items, setItems] = useState<ReviewItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     api.review().then((r) => (setItems(r.items), setError(null))).catch((e) => setError(e.message));
   }, [props.refreshKey]);
+
+  async function retry() {
+    setRetrying(true);
+    try {
+      const r = await api.retryReview();
+      const filed = r.saved + r.alreadySaved;
+      toast('ok', filed
+        ? `Filed ${filed} message${filed === 1 ? '' : 's'}${r.alreadySaved ? ` (${r.alreadySaved} were already saved)` : ''} · ${r.remaining} left`
+        : `Nothing new could be read · ${r.remaining} left`);
+      props.onChanged();
+    } catch (e) {
+      toast('err', (e as Error).message);
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   async function discard(item: ReviewItem) {
     if (!window.confirm('Discard this record? It will not be saved as a transaction.')) return;
@@ -53,7 +70,11 @@ export function Review(props: { refreshKey: number; onFix: (item: ReviewItem) =>
     <div className="stack">
       <div className="alert alert-amber" style={{ alignItems: 'center' }}>
         <Inbox size={16} />
-        <span>{items.length} record{items.length === 1 ? '' : 's'} could not be filed. Fix the details and save, or discard what isn't a real spend.</span>
+        <span style={{ flex: 1 }}>{items.length} record{items.length === 1 ? '' : 's'} could not be filed. Try again to re-read them
+          with the latest rules and Gemini, fix the details by hand, or discard what isn't a real transaction.</span>
+        <button className="btn btn-sm" disabled={retrying} onClick={retry}>
+          {retrying ? <LoaderCircle size={14} className="spinner" /> : <RefreshCw size={14} />} Try again
+        </button>
       </div>
       {items.map((item) => {
         const { sms, fields: p } = reviewParts(item.payload);

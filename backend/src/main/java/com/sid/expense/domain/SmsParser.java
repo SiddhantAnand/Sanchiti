@@ -80,7 +80,7 @@ public final class SmsParser {
   // A payee name ends at a date ("On 03/10/26" or a bare "04/10/26"), a bracket, a ref or a sentence end. Some banks
   // glue sentences without a space: "to SIDDHANT ANAND.RRN 5145...Avl Bal".
   private static final String PAYEE_END =
-      "(?=\\s+on\\s+\\d|\\s+\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b|\\s*\\(|\\s+ref\\b|\\s+(?:through|using)\\b|\\.\\s"
+      "(?=\\s+on\\s+\\d|\\s+\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b|\\s*\\(|\\s+-?\\s*ref\\b|\\s+(?:through|using)\\b|\\.\\s"
           + "|\\.(?=(?:rrn|ref|avl|avail|upi|not you)\\b)|\\.?$";
 
   private static final List<Pattern> PAYEE = List.of(
@@ -88,8 +88,8 @@ public final class SmsParser {
       Pattern.compile("\\bon\\s+\\d{1,2}[- ][A-Za-z]{3}[a-z]*[- ]\\d{2,4}\\s+(?:on|at)\\s+(.+?)(?=\\.\\s|\\s+avl\\b|\\.?$)", I),
       // "At RENTOMOJO On 2026-10-08:12:20:39"
       Pattern.compile("\\bat\\s+(.+?)" + PAYEE_END + ")", I),
-      // "To SIDDHANT ANAND On 03/10/26 Ref ...", "to a/c **0001 (UPI Ref No. ...)"
-      Pattern.compile("\\bto\\s+(?:vpa\\s+)?(.+?)" + PAYEE_END + "|\\s+upi\\b|\\s+via\\b|\\s+from\\b)", I),
+      // "To SIDDHANT ANAND On 03/10/26 Ref ...", "to a/c **0001 (UPI Ref No. ...)"; "linked to <bank>" is the sender side
+      Pattern.compile("(?<!linked )\\bto\\s+(?:vpa\\s+)?(.+?)" + PAYEE_END + "|\\s+upi\\b|\\s+via\\b|\\s+from\\b)", I),
       Pattern.compile("\\btowards\\s+(.+?)(?=\\s+umrn\\b|\\s+ref\\b|\\.\\s|\\.?$)", I),
       // ICICI: "Acct XX123 debited for Rs 500.00 on 05-Oct-26; RAHUL KUMAR credited."
       Pattern.compile(";\\s*([^;.]+?)\\s+credited\\b", I),
@@ -116,10 +116,11 @@ public final class SmsParser {
       Map.entry(Pattern.compile("ICICI", I), "ICICI Bank"),
       Map.entry(Pattern.compile("SBM", I), "SBM Bank India"),
       Map.entry(Pattern.compile("SBI|SBIINB|ATMSBI", I), "State Bank of India"),
-      Map.entry(Pattern.compile("INDBNK|INDIANB", I), "Indian Bank"));
+      Map.entry(Pattern.compile("INDBNK|INDIANB", I), "Indian Bank"),
+      Map.entry(Pattern.compile("BOIIND|BOISMS", I), "Bank of India"));
   private static final Pattern TEXT_BANK = Pattern.compile(
       "\\b(?:(HDFC|ICICI|SBM|Axis|Kotak|IDFC FIRST|IndusInd|Yes|Federal|Canara|Union|Punjab National|AU Small Finance)"
-          + "\\s+Bank|(State Bank of India|Bank of Baroda|SBI|Indian Bank))\\b",
+          + "\\s+Bank|(State Bank of India|Bank of Baroda|Bank of India|SBI|Indian Bank))\\b",
       I);
 
   private SmsParser() {}
@@ -299,13 +300,16 @@ public final class SmsParser {
     int bestStart = Integer.MAX_VALUE;
     for (Pattern p : PAYEE) {
       Matcher m = p.matcher(text);
-      while (m.find() && m.start() < bestStart) {
+      // A rejected candidate (too long, no letters) may swallow a later, valid one, so retry just past its start.
+      int from = 0;
+      while (from < text.length() && m.find(from) && m.start() < bestStart) {
         String name = cleanPayee(m.group(1));
         if (name != null) {
           best = name;
           bestStart = m.start();
           break;
         }
+        from = m.start() + 1;
       }
     }
     if (best != null && best.contains("/")) {

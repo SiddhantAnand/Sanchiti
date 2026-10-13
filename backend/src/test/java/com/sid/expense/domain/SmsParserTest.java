@@ -29,6 +29,15 @@ class SmsParserTest {
   }
 
   @Test
+  void readsBoiUpiDebitThatNamesTheCreditedMerchant() {
+    var f = debit("BOI UPI -VPA siddhantanand1@ybl linked to Bank of India a/c XX3802 debited Rs.90.00 and credited to "
+        + "gpay-11207894803@okbizaxis -Ref 231058425216", "AX-BOIIND-S");
+    assertThat(f).containsEntry("reason", "gpay-11207894803@okbizaxis").containsEntry("amount", "90.00")
+        .containsEntry("bankName", "Bank of India").containsEntry("paymentMethod", "UPI")
+        .containsEntry("upiRef", "231058425216");
+  }
+
+  @Test
   void endsPayeeWhereTheBankGluesSentencesTogether() {
     var f = debit("A/c *4321 debited Rs.18000.00 on 12-10-26 to SIDDHANT ANAND.RRN 514533249031.Avl Bal Rs.136.42."
         + "Not you?SMS BLOCK to 9289592895-Indian Bank", "JM-INDBNK-S");

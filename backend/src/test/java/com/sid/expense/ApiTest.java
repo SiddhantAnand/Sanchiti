@@ -66,6 +66,11 @@ class ApiTest {
 
     @Override
     public AiResult generate(String system, String prompt, Map<String, Object> schema) {
+      if (system.startsWith("You read SMS")) {
+        calls.add("sms");
+        List<?> entries = JSON.readValue(prompt, List.class);
+        return new AiResult(entries.stream().map(e -> (Map<?, ?>) e).map(StubAi::readSms).toList(), "stub", null);
+      }
       if ("ARRAY".equals(schema.get("type"))) {
         calls.add("categorize");
         List<?> entries = JSON.readValue(prompt, List.class);
@@ -79,6 +84,21 @@ class ApiTest {
       }
       calls.add("analysis");
       return new AiResult(INSIGHTS, "stub", Map.of("totalTokenCount", 42));
+    }
+
+    /** Reads the mutual fund bill SMS, refuses notices, and invents an amount for "MYSTERY" (which must be dropped). */
+    private static Map<String, Object> readSms(Map<?, ?> e) {
+      String sms = (String) e.get("sms");
+      Map<String, Object> r = new java.util.HashMap<>();
+      r.put("i", e.get("i"));
+      r.put("isTransaction", !sms.contains("applying"));
+      if (sms.contains("Bill Paid")) {
+        r.putAll(Map.of("direction", "debit", "amount", 2500, "date", "2026-10-12", "payee", "EdelweisMF",
+            "bank", "HDFC Bank", "paymentMethod", "NETBANKING"));
+      } else if (sms.contains("MYSTERY")) {
+        r.putAll(Map.of("direction", "debit", "amount", 9999, "payee", "Mystery shop"));
+      }
+      return r;
     }
 
     private static String category(String entry) {
@@ -288,7 +308,7 @@ class ApiTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.parsed[0].fields.reason").value("RENTOMOJO"))
         .andExpect(jsonPath("$.skipped[0].index").value(1))
-        .andExpect(jsonPath("$.review[0].issue").value("SMS: No amount found"));
+        .andExpect(jsonPath("$.review[0].issue").value("SMS: No amount found; Gemini couldn't read it either"));
     assertThat(count()).isZero();
 
     postSms(body, "test-phone-key")
@@ -351,6 +371,52 @@ class ApiTest {
 
     List<String> sources = jdbc.sql("SELECT category || '/' || category_source FROM transactions").query(String.class).list();
     assertThat(sources).containsOnly("Health & Medical/manual");
+  }
+
+  @Test
+  void asksGeminiOnlyForSmsTheRulesCannotReadAndChecksItsAnswer() throws Exception {
+    String body = """
+        [{"received": "2026-10-12", "sender": "",
+          "body": "Bill Paid! EdelweisMF Bill EDKFINTB-B10242 of Rs. 2500.00 paid on 12-Oct-2026 from HDFC Bank Account XX0536."},
+         {"received": "2026-10-12", "sender": "",
+          "body": "Thank you for applying for a Credit Card. An SMS will be sent shortly."},
+         {"received": "2026-10-12", "sender": "", "body": "MYSTERY debited from your a/c. Check the app."},
+         {"received": "2026-10-12", "sender": "HDFCBK",
+          "body": "Sent Rs.50.00 From HDFC Bank A/C *1122 To CHAI POINT On 12/10/26 Ref 660000000201"}]""";
+    postSms(body, "test-phone-key")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted", hasSize(2)))
+        .andExpect(jsonPath("$.inserted[*].reason", containsInAnyOrder("EdelweisMF", "CHAI POINT")))
+        .andExpect(jsonPath("$.inserted[?(@.reason == 'EdelweisMF')].note").value(contains("Read from SMS by Gemini")))
+        .andExpect(jsonPath("$.inserted[?(@.reason == 'EdelweisMF')].bank").value(contains("HDFC Bank")))
+        .andExpect(jsonPath("$.skipped[*].why", contains("Gemini: not a bank transaction")))
+        .andExpect(jsonPath("$.review[0].index").value(2))
+        .andExpect(jsonPath("$.review[0].issue").value(containsString("Gemini couldn't read it either")));
+    // One Gemini call for the two messages the rules couldn't read, none for the one they could.
+    assertThat(ai.calls.stream().filter("sms"::equals)).hasSize(1);
+  }
+
+  @Test
+  void retriesWaitingReviewItemsWithCurrentRulesAndGemini() throws Exception {
+    String sms = """
+        {"received": "2022-11-06", "sender": "", "body": "BOI UPI -VPA siddhantanand1@ybl linked to Bank of India \
+        a/c XX3802 debited Rs.90.00 and credited to gpay-11207894803@okbizaxis -Ref 231058425216"}""";
+    String notice = """
+        {"received": "2026-10-11", "sender": "", "body": "Thank you for applying for a Credit Card."}""";
+    jdbc.sql("INSERT INTO review (user_id, payload, issue, payload_hash) VALUES (1, CAST(? AS jsonb), 'SMS: No payee found', 'a')")
+        .param(sms).update();
+    jdbc.sql("INSERT INTO review (user_id, payload, issue, payload_hash) VALUES (1, CAST(? AS jsonb), 'SMS: No amount found', 'b')")
+        .param(notice).update();
+
+    mvc.perform(authed(post("/api/review/retry")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.saved").value(1))
+        .andExpect(jsonPath("$.remaining").value(1));
+    mvc.perform(authed(get("/api/transactions?from=2022-11-01&to=2022-11-30")))
+        .andExpect(jsonPath("$.items[0].reason").value("gpay-11207894803@okbizaxis"))
+        .andExpect(jsonPath("$.items[0].bank").value("Bank of India"));
+    mvc.perform(authed(get("/api/review")))
+        .andExpect(jsonPath("$.items[0].issue").value(containsString("discard it if that's right")));
   }
 
   @Test

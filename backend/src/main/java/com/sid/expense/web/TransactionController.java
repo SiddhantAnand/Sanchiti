@@ -12,6 +12,7 @@ import com.sid.expense.repo.TransactionRepository;
 import com.sid.expense.repo.TransactionRepository.Filter;
 import com.sid.expense.repo.TransactionRepository.Page;
 import com.sid.expense.service.Categorizer;
+import com.sid.expense.service.SmsReader;
 import com.sid.expense.service.TransactionService;
 import com.sid.expense.service.TransactionService.IngestResult;
 import java.math.BigDecimal;
@@ -66,15 +67,17 @@ public class TransactionController {
       List<SkipNote> skipped, List<ParsedNote> parsed) {}
 
   private final TransactionService service;
+  private final SmsReader reader;
   private final TransactionRepository repo;
   private final Categorizer categorizer;
   private final AppProperties props;
   private final JsonMapper json;
 
   public TransactionController(
-      TransactionService service, TransactionRepository repo, Categorizer categorizer, AppProperties props,
-      JsonMapper json) {
+      TransactionService service, SmsReader reader, TransactionRepository repo, Categorizer categorizer,
+      AppProperties props, JsonMapper json) {
     this.service = service;
+    this.reader = reader;
     this.repo = repo;
     this.categorizer = categorizer;
     this.props = props;
@@ -127,32 +130,38 @@ public class TransactionController {
     List<ReviewNote> review = new ArrayList<>();
     List<SkipNote> skipped = new ArrayList<>();
     List<ParsedNote> parsed = new ArrayList<>();
+    List<Integer> smsIndexes = new ArrayList<>();
+    List<SmsReader.Sms> sms = new ArrayList<>();
     for (int i = 0; i < messages.size(); i++) {
-      Object message = messages.get(i);
-      if (!(message instanceof Map<?, ?> sms)) {
+      if (messages.get(i) instanceof Map<?, ?> m) {
+        smsIndexes.add(i);
+        sms.add(new SmsReader.Sms(text(m.get("body")), text(m.get("sender")),
+            SmsParser.receivedDate(text(firstPresent(m)))));
+      } else {
         review.add(new ReviewNote(i, "Each message must be an object with a body"));
-        continue;
       }
-      var result = SmsParser.parse(
-          text(sms.get("body")), text(sms.get("sender")), SmsParser.receivedDate(text(firstPresent(sms))));
-      switch (result) {
-        case SmsParser.Skip skip -> skipped.add(new SkipNote(i, skip.why()));
-        case SmsParser.Unreadable unreadable -> {
-          forReview.add(new ReviewRepository.Pending(sms, "SMS: " + unreadable.why()));
-          review.add(new ReviewNote(i, "SMS: " + unreadable.why()));
+    }
+    List<SmsReader.Outcome> outcomes = reader.read(sms);
+    for (int k = 0; k < outcomes.size(); k++) {
+      int i = smsIndexes.get(k);
+      Object message = messages.get(i);
+      switch (outcomes.get(k)) {
+        case SmsReader.Skipped skip -> skipped.add(new SkipNote(i, skip.why()));
+        case SmsReader.NeedsReview needs -> {
+          forReview.add(new ReviewRepository.Pending(message, needs.issue()));
+          review.add(new ReviewNote(i, needs.issue()));
         }
-        case SmsParser.Parsed read -> {
+        case SmsReader.Read read -> {
           parsed.add(new ParsedNote(i, read.fields()));
-          var checked = service.check(read.fields());
-          if (checked.issue() == null) {
-            valid.add(checked.input());
+          if (read.input() != null) {
+            valid.add(read.byAi() ? read.input().withNote(SmsReader.AI_NOTE) : read.input());
             validIndexes.add(i);
           } else {
             Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("sms", sms);
+            payload.put("sms", message);
             payload.put("parsed", read.fields());
-            forReview.add(new ReviewRepository.Pending(payload, checked.issue()));
-            review.add(new ReviewNote(i, checked.issue()));
+            forReview.add(new ReviewRepository.Pending(payload, read.issue()));
+            review.add(new ReviewNote(i, read.issue()));
           }
         }
       }

@@ -131,6 +131,11 @@ public record TransactionInput(
         date, amountMinor, reason, currency, canonical, paymentMethod, cardLast4, upiRef, note, direction, category);
   }
 
+  public TransactionInput withNote(String newNote) {
+    return new TransactionInput(
+        date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, newNote, direction, category);
+  }
+
   public boolean isCredit() {
     return direction == Direction.CREDIT;
   }

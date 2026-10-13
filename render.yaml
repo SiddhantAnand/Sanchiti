@@ -1,0 +1,69 @@
+# Render Blueprint: free API (prebuilt GHCR image, redeployed by CI's deploy hook) + free static web UI.
+# Secrets (DB_URL, DB_USER, DB_PASSWORD) are added in the Render dashboard, never here.
+services:
+  - type: web
+    name: sanchiti-api
+    runtime: image
+    image:
+      url: ghcr.io/siddhantanand/sanchiti-api:latest
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    envVars:
+      - key: DB_URL
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: SECURE_COOKIES
+        value: "true"
+      # Free instance has 512 MB; leave room for metaspace/threads. C1-only JIT starts faster on 0.1 CPU.
+      - key: JAVA_TOOL_OPTIONS
+        value: "-XX:MaxRAMPercentage=50 -XX:+UseSerialGC -Xss512k -XX:TieredStopAtLevel=1"
+      # Close idle DB connections so Neon's free compute can scale to zero.
+      - key: SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE
+        value: "0"
+      - key: SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT
+        value: "60000"
+      - key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
+        value: "3"
+
+  - type: web
+    name: sanchiti
+    runtime: static
+    rootDir: web
+    buildCommand: npm ci --no-audit --no-fund && npm run build
+    staticPublishPath: dist
+    buildFilter:
+      paths: ["web/**"]
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+    # Same origin for the sign-in cookie: the UI proxies /api to the API service.
+    routes:
+      - type: rewrite
+        source: /api/*
+        destination: https://sanchiti-api.onrender.com/api/*
+      - type: rewrite
+        source: /health
+        destination: https://sanchiti-api.onrender.com/health
+    headers:
+      - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /*
+        name: Strict-Transport-Security
+        value: "max-age=31536000; includeSubDomains"
+      - path: /assets/*
+        name: Cache-Control
+        value: "public, max-age=31536000, immutable"

@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, CircleAlert, CreditCard, Landmark, LoaderCircle, Smartphone, Sparkles, Wallet } from 'lucide-react';
 import { api, ApiError, reviewParts, type Direction, type ReviewItem, type Transaction, type TransactionFields } from './api';
-import { Drawer, useToast } from './ui';
-import { CategoryIcon } from './categories';
+import { Drawer, usePrompt, useToast } from './ui';
+import { CategoryIcon, NEW_CATEGORY } from './categories';
 import { longDate, money, toIso } from './format';
+
+const NEW_BANK = '__new_bank__';
 
 export type DrawerMode =
   | { kind: 'add'; direction?: Direction }
@@ -54,10 +56,12 @@ function initialFields(mode: DrawerMode): TransactionFields {
 
 export function TxDrawer(props: {
   mode: DrawerMode; categories: string[]; creditCategories: string[]; banks: string[]; aiEnabled: boolean;
+  onAddCategory: (name: string, direction: Direction) => Promise<string>; onAddBank: (name: string) => Promise<string>;
   onClose: () => void; onSaved: () => void;
 }) {
   const { mode } = props;
   const toast = useToast();
+  const prompt = usePrompt();
   const initial = useMemo(() => initialFields(mode), [mode]);
   const initialCategory = mode.kind === 'edit' ? mode.tx.category ?? GEMINI : GEMINI;
   const [f, setF] = useState<TransactionFields>(initial);
@@ -75,6 +79,31 @@ export function TxDrawer(props: {
     set('direction', d);
     const fits = (d === 'credit' ? props.creditCategories : props.categories).includes(category);
     if (!fits) setCategory(GEMINI);
+  }
+
+  async function pickCategory(value: string) {
+    if (value !== NEW_CATEGORY) return setCategory(value);
+    const name = await prompt({
+      title: 'New category', label: `Name it (for ${credit ? 'money in' : 'spending'})`,
+      placeholder: credit ? 'e.g. Rent received, Freelance' : 'e.g. Pet care, Gym, Kids',
+    });
+    if (!name) return;
+    try {
+      setCategory(await props.onAddCategory(name, f.direction));
+    } catch (e) {
+      toast('err', (e as Error).message);
+    }
+  }
+
+  async function pickBank(value: string) {
+    if (value !== NEW_BANK) return set('bankName', value || null);
+    const name = await prompt({ title: 'Add a bank', label: 'Bank name', placeholder: 'e.g. Axis Bank, Kotak Mahindra Bank' });
+    if (!name) return;
+    try {
+      set('bankName', await props.onAddBank(name));
+    } catch (e) {
+      toast('err', (e as Error).message);
+    }
   }
 
   const bankOptions = f.bankName && !props.banks.includes(f.bankName) ? [...props.banks, f.bankName] : props.banks;
@@ -197,9 +226,10 @@ export function TxDrawer(props: {
           <span>Category</span>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <CategoryIcon category={category || null} size={40} />
-            <select className="select" value={category} onChange={(e) => setCategory(e.target.value)}>
+            <select className="select" value={category} onChange={(e) => pickCategory(e.target.value)}>
               <option value={GEMINI}>{credit ? 'Automatic' : props.aiEnabled ? '✦ Let Gemini decide' : 'Uncategorized'}</option>
               {options.map((c) => <option key={c} value={c}>{c}</option>)}
+              <option value={NEW_CATEGORY}>＋ New category…</option>
             </select>
           </div>
         </label>
@@ -232,11 +262,12 @@ export function TxDrawer(props: {
         )}
         <label className="field">
           <span>Bank</span>
-          <select className="select" value={f.bankName ?? ''} onChange={(e) => set('bankName', e.target.value || null)}>
+          <select className="select" value={f.bankName ?? ''} onChange={(e) => pickBank(e.target.value)}>
             <option value="">Not specified</option>
             {bankOptions.map((b) => (
               <option key={b} value={b}>{props.banks.includes(b) ? b : `${b} (unknown)`}</option>
             ))}
+            <option value={NEW_BANK}>＋ Add bank…</option>
           </select>
         </label>
         <label className="field">

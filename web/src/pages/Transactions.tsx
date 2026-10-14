@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Funnel, Landmark, LoaderCircle, Pencil, Plus, ReceiptText, Search, Sparkles, Trash, X } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Funnel, Landmark, LoaderCircle, Pencil, Plus, ReceiptText, Search, Sparkles, Trash, Users, X } from 'lucide-react';
 import { api, type Direction, type Transaction } from '../api';
-import { CategoryIcon, UNCATEGORIZED, categoryMeta } from '../categories';
+import { CategoryIcon, NEW_CATEGORY, UNCATEGORIZED, categoryMeta } from '../categories';
 import { dayHeading, methodLabel, money, rangeLabel, type Period } from '../format';
-import { Empty, Skeleton, useToast } from '../ui';
+import { Empty, Skeleton, usePrompt, useToast } from '../ui';
 import { IN_KINDS, KINDS } from './Banks';
 
 const PAGE = 50;
@@ -11,10 +11,13 @@ const PAGE = 50;
 export function Transactions(props: {
   period: Period; refreshKey: number; categories: string[]; creditCategories: string[]; initialCategory: string;
   initialBank: string; initialKind: string; initialDirection: Direction; aiEnabled: boolean;
-  onEdit: (tx: Transaction) => void; onAdd: (direction: Direction) => void; onChanged: () => void;
+  onAddCategory: (name: string, direction: Direction) => Promise<string>;
+  onEdit: (tx: Transaction) => void; onAdd: (direction: Direction) => void; onSplit: (tx: Transaction) => void;
+  onChanged: () => void;
 }) {
   const { period } = props;
   const toast = useToast();
+  const prompt = usePrompt();
   const [query, setQuery] = useState('');
   const [q, setQ] = useState('');
   const [direction, setDirection] = useState<Direction>(props.initialDirection);
@@ -25,6 +28,7 @@ export function Transactions(props: {
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inSplit, setInSplit] = useState<Set<string>>(new Set());
   const credit = direction === 'credit';
   const options = credit ? props.creditCategories : props.categories;
 
@@ -72,11 +76,26 @@ export function Transactions(props: {
   useEffect(() => {
     setItems(null);
     load(0).catch((e) => setError(e.message));
+    api.splitLinked().then((r) => setInSplit(new Set(r.transactionIds))).catch(() => {});
   }, [load, props.refreshKey]);
 
   const reload = () => load(0, Math.max(PAGE, items?.length ?? 0)).catch((e) => setError(e.message));
 
-  async function changeCategory(tx: Transaction, value: string) {
+  async function changeCategory(tx: Transaction, picked: string) {
+    let value = picked;
+    if (value === NEW_CATEGORY) {
+      const name = await prompt({
+        title: 'New category', label: `Name it (for ${tx.direction === 'credit' ? 'money in' : 'spending'})`,
+        placeholder: tx.direction === 'credit' ? 'e.g. Rent received, Freelance' : 'e.g. Pet care, Gym, Kids',
+      });
+      if (!name) return;
+      try {
+        value = await props.onAddCategory(name, tx.direction);
+      } catch (e) {
+        toast('err', (e as Error).message);
+        return;
+      }
+    }
     try {
       const updated = await api.updateTransaction(tx.id, { category: value || null });
       const auto = tx.direction === 'credit' ? `Set automatically: ${updated.category ?? 'Received'}` : `Gemini picked ${updated.category ?? 'nothing yet'}`;
@@ -174,7 +193,10 @@ export function Transactions(props: {
                 <div className="tx-row" key={t.id} onClick={() => props.onEdit(t)}>
                   <CategoryIcon category={t.category} size={38} />
                   <div style={{ minWidth: 0 }}>
-                    <div className="payee">{payee}</div>
+                    <div className="payee">
+                      {payee}
+                      {inSplit.has(t.id) && <span className="badge split-badge" title="Used in a split"><Users size={11} /> Split</span>}
+                    </div>
                     {t.note ? <div className="note">“{t.note}”</div> : payee !== t.reason && <div className="reason">{t.reason}</div>}
                   </div>
                   <div className="col-cat" onClick={(e) => e.stopPropagation()}>
@@ -187,6 +209,7 @@ export function Transactions(props: {
                     >
                       <option value="">{credit ? 'Automatic' : props.aiEnabled ? '✦ Let Gemini decide' : UNCATEGORIZED}</option>
                       {options.map((c) => <option key={c} value={c}>{c}</option>)}
+                      <option value={NEW_CATEGORY}>＋ New category…</option>
                     </select>
                     {t.categorySource === 'ai' && <Sparkles size={12} style={{ color: 'var(--gemini-text)', flex: 'none' }} aria-label="Categorised by Gemini" />}
                   </div>
@@ -194,6 +217,11 @@ export function Transactions(props: {
                   <div className="cell-muted col-bank">{t.bank ?? '—'}</div>
                   <div className={`amount ${credit ? 'credit' : ''}`}>{credit ? '+' : ''}{money(t.amount, t.currency)}</div>
                   <div className="actions" onClick={(e) => e.stopPropagation()}>
+                    {!credit && (
+                      <button className="icon-btn" aria-label="Split with a group" title="Split with a group" onClick={() => props.onSplit(t)}>
+                        <Users size={15} />
+                      </button>
+                    )}
                     <button className="icon-btn" aria-label="Edit" onClick={() => props.onEdit(t)}><Pencil size={15} /></button>
                     <button className="icon-btn danger" aria-label="Delete" onClick={() => remove(t)}><Trash size={15} /></button>
                   </div>

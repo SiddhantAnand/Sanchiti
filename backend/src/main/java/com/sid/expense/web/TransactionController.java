@@ -12,6 +12,7 @@ import com.sid.expense.repo.TransactionRepository;
 import com.sid.expense.repo.TransactionRepository.Filter;
 import com.sid.expense.repo.TransactionRepository.Page;
 import com.sid.expense.service.Categorizer;
+import com.sid.expense.service.Catalog;
 import com.sid.expense.service.SmsReader;
 import com.sid.expense.service.TransactionService;
 import com.sid.expense.service.TransactionService.IngestResult;
@@ -68,16 +69,18 @@ public class TransactionController {
 
   private final TransactionService service;
   private final SmsReader reader;
+  private final Catalog catalog;
   private final TransactionRepository repo;
   private final Categorizer categorizer;
   private final AppProperties props;
   private final JsonMapper json;
 
   public TransactionController(
-      TransactionService service, SmsReader reader, TransactionRepository repo, Categorizer categorizer,
-      AppProperties props, JsonMapper json) {
+      TransactionService service, SmsReader reader, Catalog catalog, TransactionRepository repo,
+      Categorizer categorizer, AppProperties props, JsonMapper json) {
     this.service = service;
     this.reader = reader;
+    this.catalog = catalog;
     this.repo = repo;
     this.categorizer = categorizer;
     this.props = props;
@@ -96,7 +99,7 @@ public class TransactionController {
 
     List<TransactionInput> valid = new ArrayList<>();
     for (int i = 0; i < items.size(); i++) {
-      var checked = service.check(items.get(i));
+      var checked = service.check(user.id(), items.get(i));
       if (checked.issue() != null) {
         String where = items.size() == 1 ? "" : "Item " + i + ": ";
         throw new ApiException(HttpStatus.BAD_REQUEST, where + checked.issue());
@@ -141,7 +144,7 @@ public class TransactionController {
         review.add(new ReviewNote(i, "Each message must be an object with a body"));
       }
     }
-    List<SmsReader.Outcome> outcomes = reader.read(sms);
+    List<SmsReader.Outcome> outcomes = reader.read(user.id(), sms);
     for (int k = 0; k < outcomes.size(); k++) {
       int i = smsIndexes.get(k);
       Object message = messages.get(i);
@@ -229,7 +232,7 @@ public class TransactionController {
       @RequestParam(required = false) String direction,
       @RequestParam(defaultValue = "100") int limit,
       @RequestParam(defaultValue = "0") int offset) {
-    if (category != null && !Category.UNCATEGORIZED.equals(category) && Category.fromLabel(category).isEmpty()) {
+    if (category != null && !Category.UNCATEGORIZED.equals(category) && !catalog.isCategory(user.id(), category)) {
       throw new ApiException(HttpStatus.BAD_REQUEST, "Unknown category; see /api/categories");
     }
     if (kind != null && !TransactionRepository.KINDS.contains(kind)) {
@@ -299,10 +302,12 @@ public class TransactionController {
     List<String> unknown = patch.keySet().stream().map(String::valueOf).filter(k -> !EDITABLE.contains(k)).toList();
     if (!unknown.isEmpty()) throw new ApiException(HttpStatus.BAD_REQUEST, "Cannot edit: " + String.join(", ", unknown));
 
-    Category category = null;
+    String requested = null;
     if (patch.get("category") != null) {
-      category = patch.get("category") instanceof String s ? Category.fromLabel(s).orElse(null) : null;
-      if (category == null) throw new ApiException(HttpStatus.BAD_REQUEST, "category must be one of /api/categories or null");
+      if (!(patch.get("category") instanceof String s) || !catalog.isCategory(user.id(), s)) {
+        throw new ApiException(HttpStatus.BAD_REQUEST, "category must be one of /api/categories or null");
+      }
+      requested = s;
     }
     Transaction tx = uuid(id).flatMap(u -> repo.findById(user.id(), u))
         .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "Transaction not found"));
@@ -311,9 +316,10 @@ public class TransactionController {
       direction = patch.get("direction") instanceof String s ? Direction.parse(s).orElse(null) : null;
       if (direction == null) throw new ApiException(HttpStatus.BAD_REQUEST, "direction must be debit or credit");
     }
-    if (category != null && !category.fits(direction)) {
-      throw new ApiException(HttpStatus.BAD_REQUEST, category.label() + " is not a " + direction.json() + " category");
-    }
+    Direction dir = direction;
+    String category = requested == null ? null : catalog.category(user.id(), requested, dir)
+        .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
+            patch.get("category") + " is not a " + dir.json() + " category"));
 
     if (patch.keySet().stream().anyMatch(k -> !"category".equals(k))) {
       Map<String, Object> merged = new HashMap<>();
@@ -329,7 +335,7 @@ public class TransactionController {
       patch.forEach((k, v) -> merged.put(String.valueOf(k), v));
       merged.remove("category");
       merged.put("direction", direction.json());
-      var checked = service.check(merged);
+      var checked = service.check(user.id(), merged);
       if (checked.issue() != null) throw new ApiException(HttpStatus.BAD_REQUEST, checked.issue());
       service.edit(user.id(), user.name(), tx, checked.input());
     }

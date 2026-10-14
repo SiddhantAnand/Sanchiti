@@ -39,7 +39,7 @@ public class TransactionRepository {
       rs.getString("upi_ref"),
       rs.getString("card_last4"),
       rs.getString("bank"),
-      Category.fromLabel(rs.getString("category")).orElse(null),
+      rs.getString("category"),
       rs.getString("category_source"),
       rs.getString("note"),
       rs.getObject("created_at", OffsetDateTime.class));

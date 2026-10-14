@@ -12,7 +12,7 @@ import java.util.regex.Pattern;
 /** Validated POST body item. Amounts are kept in minor units (paise) to avoid float errors. */
 public record TransactionInput(
     LocalDate date, long amountMinor, String reason, String currency, String bank, String paymentMethod,
-    String cardLast4, String upiRef, String note, Direction direction, Category category) {
+    String cardLast4, String upiRef, String note, Direction direction, String category) {
 
   public static final String BASE_CURRENCY = "INR";
   private static final BigDecimal MAX_AMOUNT = new BigDecimal("1000000000");
@@ -109,14 +109,8 @@ public record TransactionInput(
       if (direction == null) issues.add(new Issue("direction", "direction must be debit or credit"));
     }
 
-    Category category = null;
-    String rawCategory = blankToNull(map.get("category"));
-    if (rawCategory != null) {
-      category = Category.fromLabel(rawCategory).orElse(null);
-      if (category == null || (direction != null && !category.fits(direction))) {
-        issues.add(new Issue("category", "Unknown category for a " + (direction == null ? "debit" : direction.json())));
-      }
-    }
+    String category = blankToNull(map.get("category"));
+    if (category != null && category.length() > 60) issues.add(new Issue("category", "Category is too long"));
 
     return issues.isEmpty()
         ? new Parsed(
@@ -129,6 +123,11 @@ public record TransactionInput(
   public TransactionInput withBank(String canonical) {
     return new TransactionInput(
         date, amountMinor, reason, currency, canonical, paymentMethod, cardLast4, upiRef, note, direction, category);
+  }
+
+  public TransactionInput withCategory(String label) {
+    return new TransactionInput(
+        date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, note, direction, label);
   }
 
   public TransactionInput withNote(String newNote) {

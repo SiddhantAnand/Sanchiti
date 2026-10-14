@@ -2,8 +2,6 @@ package com.sid.expense.service;
 
 import com.sid.expense.ai.AiClient;
 import com.sid.expense.ai.AiException;
-import com.sid.expense.config.AppProperties;
-import com.sid.expense.domain.Banks;
 import com.sid.expense.domain.Dates;
 import com.sid.expense.domain.SmsParser;
 import com.sid.expense.domain.TransactionInput;
@@ -82,17 +80,17 @@ public class SmsReader {
   private final TransactionService transactions;
   private final AiClient ai;
   private final JsonMapper json;
-  private final Banks banks;
+  private final Catalog catalog;
 
-  public SmsReader(TransactionService transactions, AiClient ai, JsonMapper json, AppProperties props) {
+  public SmsReader(TransactionService transactions, AiClient ai, JsonMapper json, Catalog catalog) {
     this.transactions = transactions;
     this.ai = ai;
     this.json = json;
-    this.banks = new Banks(props.knownBanks());
+    this.catalog = catalog;
   }
 
   /** One outcome per message, in order. */
-  public List<Outcome> read(List<Sms> messages) {
+  public List<Outcome> read(long userId, List<Sms> messages) {
     List<Outcome> outcomes = new ArrayList<>();
     List<Integer> unread = new ArrayList<>();
     for (int i = 0; i < messages.size(); i++) {
@@ -100,25 +98,25 @@ public class SmsReader {
       Outcome outcome = switch (SmsParser.parse(sms.body(), sms.sender(), sms.received())) {
         case SmsParser.Skip skip -> new Skipped(skip.why());
         case SmsParser.Unreadable unreadable -> new NeedsReview("SMS: " + unreadable.why());
-        case SmsParser.Parsed parsed -> read(parsed.fields(), false);
+        case SmsParser.Parsed parsed -> read(userId, parsed.fields(), false);
       };
       if (outcome instanceof NeedsReview && sms.body() != null && !sms.body().isBlank()) unread.add(i);
       outcomes.add(outcome);
     }
     if (!unread.isEmpty() && ai.isEnabled()) {
       for (int start = 0; start < unread.size(); start += BATCH) {
-        askGemini(messages, unread.subList(start, Math.min(unread.size(), start + BATCH)), outcomes);
+        askGemini(userId, messages, unread.subList(start, Math.min(unread.size(), start + BATCH)), outcomes);
       }
     }
     return outcomes;
   }
 
-  private Read read(Map<String, Object> fields, boolean byAi) {
-    var checked = transactions.check(fields);
+  private Read read(long userId, Map<String, Object> fields, boolean byAi) {
+    var checked = transactions.check(userId, fields);
     return new Read(fields, checked.issue() == null ? checked.input() : null, checked.issue(), byAi);
   }
 
-  private void askGemini(List<Sms> messages, List<Integer> indexes, List<Outcome> outcomes) {
+  private void askGemini(long userId, List<Sms> messages, List<Integer> indexes, List<Outcome> outcomes) {
     List<Map<String, Object>> entries = new ArrayList<>();
     for (int k = 0; k < indexes.size(); k++) {
       Sms sms = messages.get(indexes.get(k));
@@ -148,15 +146,15 @@ public class SmsReader {
         outcomes.set(index, new Skipped("Gemini: not a bank transaction"));
         continue;
       }
-      Map<String, Object> fields = fieldsFrom(m, sms);
+      Map<String, Object> fields = fieldsFrom(userId, m, sms);
       outcomes.set(index, fields == null
           ? new NeedsReview(((NeedsReview) previous).issue() + "; Gemini couldn't read it either")
-          : read(fields, true));
+          : read(userId, fields, true));
     }
   }
 
   /** Null unless Gemini returned an amount and payee that the SMS supports. */
-  private Map<String, Object> fieldsFrom(Map<?, ?> m, Sms sms) {
+  private Map<String, Object> fieldsFrom(long userId, Map<?, ?> m, Sms sms) {
     String text = sms.body();
     BigDecimal amount = m.get("amount") instanceof Number n ? new BigDecimal(n.toString()) : null;
     String payee = m.get("payee") instanceof String s && !s.isBlank() ? s.trim() : null;
@@ -175,7 +173,7 @@ public class SmsReader {
     fields.put("date", date.toString());
     fields.put("amount", amount.toPlainString());
     fields.put("reason", payee);
-    fields.put("bankName", m.get("bank") instanceof String b ? banks.resolve(b).orElse(null) : null);
+    fields.put("bankName", m.get("bank") instanceof String b ? catalog.banks(userId).resolve(b).orElse(null) : null);
     fields.put("paymentMethod", m.get("paymentMethod") instanceof String p ? p : null);
     fields.put("upiRef", inText(m.get("upiRef"), text));
     fields.put("cardLast4", inText(m.get("cardLast4"), text));

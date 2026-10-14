@@ -36,27 +36,31 @@ public class Categorizer {
       electricity/mobile recharge/broadband/gas = Bills & Utilities, SIP/mutual fund/FD = Investments & Savings,
       CRED/credit card bill payments = Card Bill Payment.""";
 
-  private static final Map<String, Object> RESPONSE_SCHEMA = Map.of(
-      "type", "ARRAY",
-      "items", Map.of(
-          "type", "OBJECT",
-          "properties", Map.of(
-              "i", Map.of("type", "INTEGER"),
-              // Self transfers are recognised from the account holder's name, which Gemini never sees.
-              "category", Map.of("type", "STRING", "enum", Category.labels(Direction.DEBIT).stream()
-                  .filter(l -> !l.equals(Category.SELF_TRANSFER.label())).toList())),
-          "required", List.of("i", "category")));
+  /** The user's own debit categories are offered too. */
+  private static Map<String, Object> schema(List<String> labels) {
+    return Map.of(
+        "type", "ARRAY",
+        "items", Map.of(
+            "type", "OBJECT",
+            "properties", Map.of(
+                "i", Map.of("type", "INTEGER"),
+                "category", Map.of("type", "STRING", "enum", labels)),
+            "required", List.of("i", "category")));
+  }
 
   record Entry(int i, String entry) {}
 
   private final TransactionRepository repo;
   private final TransactionService transactions;
+  private final Catalog catalog;
   private final AiClient ai;
   private final JsonMapper json;
 
-  public Categorizer(TransactionRepository repo, TransactionService transactions, AiClient ai, JsonMapper json) {
+  public Categorizer(
+      TransactionRepository repo, TransactionService transactions, Catalog catalog, AiClient ai, JsonMapper json) {
     this.repo = repo;
     this.transactions = transactions;
+    this.catalog = catalog;
     this.ai = ai;
     this.json = json;
   }
@@ -73,6 +77,11 @@ public class Categorizer {
   /** Sends each distinct uncategorised merchant to Gemini once. Synchronised so overlapping calls never double-spend tokens. */
   public synchronized int categorizePending(long userId) {
     if (!ai.isEnabled()) return 0;
+    // Self transfers are recognised from the account holder's name, which Gemini never sees.
+    List<String> labels = catalog.categories(userId, Direction.DEBIT).stream()
+        .filter(l -> !l.equals(Category.SELF_TRANSFER.label()))
+        .toList();
+    Map<String, Object> schema = schema(labels);
     int changed = 0;
     for (int batch = 0; batch < MAX_BATCHES; batch++) {
       List<PendingReason> pending = repo.pendingReasons(userId, BATCH_SIZE);
@@ -81,13 +90,13 @@ public class Categorizer {
       List<Entry> entries = IntStream.range(0, pending.size())
           .mapToObj(i -> new Entry(i, NarrationParser.describeForAi(pending.get(i).reason())))
           .toList();
-      Object data = ai.generate(SYSTEM, json.writeValueAsString(entries), RESPONSE_SCHEMA).data();
+      Object data = ai.generate(SYSTEM, json.writeValueAsString(entries), schema).data();
       if (!(data instanceof List<?> results)) throw new AiException("Gemini returned an unexpected categorisation format");
 
       List<CategoryUpdate> updates = new ArrayList<>();
       for (Object r : results) {
         if (r instanceof Map<?, ?> m && m.get("i") instanceof Number i && i.intValue() >= 0 && i.intValue() < pending.size()) {
-          Category category = m.get("category") instanceof String s ? Category.fromLabel(s).orElse(Category.OTHER) : Category.OTHER;
+          String category = m.get("category") instanceof String s && labels.contains(s) ? s : Category.OTHER.label();
           updates.add(new CategoryUpdate(pending.get(i.intValue()).reasonKey(), category));
         }
       }

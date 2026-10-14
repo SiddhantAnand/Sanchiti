@@ -1,10 +1,12 @@
 import {
   ArrowLeftRight, BriefcaseBusiness, Car, CircleQuestionMark, Clapperboard, CreditCard, Ellipsis, Fuel, Gift,
   GraduationCap, HandCoins, HeartPulse, House, Landmark, Percent, PiggyBank, Plane, Receipt, Repeat, Scissors,
-  ShoppingBag, ShoppingBasket, Undo2, Utensils, Zap, type LucideIcon,
+  ShoppingBag, ShoppingBasket, Tag, Undo2, Utensils, Zap, type LucideIcon,
 } from 'lucide-react';
 
 export const UNCATEGORIZED = 'Uncategorized';
+/** Select value that opens the "name a new category" prompt. */
+export const NEW_CATEGORY = '__new_category__';
 
 type Meta = { color: string; icon: LucideIcon };
 
@@ -37,7 +39,16 @@ const META: Record<string, Meta> = {
   [UNCATEGORIZED]: { color: '#4B5574', icon: CircleQuestionMark },
 };
 
-export const categoryMeta = (c: string | null | undefined): Meta => META[c ?? UNCATEGORIZED] ?? META.Other;
+const CUSTOM_COLORS = ['#F59E0B', '#06B6D4', '#8B5CF6', '#EC4899', '#84CC16', '#0EA5E9', '#F97316', '#14B8A6'];
+
+/** Built-in categories have fixed looks; ones the user named get a steady colour from their name. */
+export const categoryMeta = (c: string | null | undefined): Meta => {
+  const known = META[c ?? UNCATEGORIZED];
+  if (known) return known;
+  let h = 0;
+  for (const ch of c ?? '') h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return { color: CUSTOM_COLORS[h % CUSTOM_COLORS.length], icon: Tag };
+};
 
 export function CategoryIcon({ category, size = 36 }: { category: string | null; size?: number }) {
   const { color, icon: Icon } = categoryMeta(category);

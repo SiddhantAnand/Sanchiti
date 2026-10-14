@@ -1,7 +1,5 @@
 package com.sid.expense.service;
 
-import com.sid.expense.config.AppProperties;
-import com.sid.expense.domain.Banks;
 import com.sid.expense.domain.Category;
 import com.sid.expense.domain.NarrationParser;
 import com.sid.expense.domain.OwnMoney;
@@ -31,7 +29,7 @@ public class TransactionService {
 
   public record IngestResult(List<UUID> insertedIds, List<Integer> duplicateIndexes) {}
 
-  public record CategoryUpdate(String reasonKey, Category category) {}
+  public record CategoryUpdate(String reasonKey, String category) {}
 
   /** A validated item with its bank resolved to the canonical name, or the reason it needs review. */
   public record Checked(TransactionInput input, String issue) {}
@@ -42,17 +40,18 @@ public class TransactionService {
 
   private final TransactionRepository repo;
   private final ReviewRepository reviews;
-  private final Banks banks;
+  private final Catalog catalog;
 
   private static final String CREDIT_KEY = "in:";
 
-  public TransactionService(TransactionRepository repo, ReviewRepository reviews, AppProperties props) {
+  public TransactionService(TransactionRepository repo, ReviewRepository reviews, Catalog catalog) {
     this.repo = repo;
     this.reviews = reviews;
-    this.banks = new Banks(props.knownBanks());
+    this.catalog = catalog;
   }
 
-  public Checked check(Object item) {
+  /** Validates one item for this user: their own banks and categories count as known. */
+  public Checked check(long userId, Object item) {
     var parsed = TransactionInput.parse(item);
     if (!parsed.ok()) {
       return new Checked(null, parsed.issues().stream()
@@ -60,10 +59,18 @@ public class TransactionService {
           .collect(Collectors.joining("; ")));
     }
     TransactionInput input = parsed.value();
+    if (input.category() != null) {
+      Optional<String> category = catalog.category(userId, input.category(), input.direction());
+      if (category.isEmpty()) {
+        return new Checked(null, "category: Unknown category for a " + input.direction().json());
+      }
+      input = input.withCategory(category.get());
+    }
     if (input.bank() == null) return new Checked(input, null);
-    return banks.resolve(input.bank())
-        .map(canonical -> new Checked(input.withBank(canonical), null))
-        .orElseGet(() -> new Checked(null, "Unknown bank: " + input.bank()));
+    TransactionInput valid = input;
+    return catalog.banks(userId).resolve(input.bank())
+        .map(canonical -> new Checked(valid.withBank(canonical), null))
+        .orElseGet(() -> new Checked(null, "Unknown bank: " + valid.bank()));
   }
 
   private static Derived derive(TransactionInput t) {
@@ -128,12 +135,12 @@ public class TransactionService {
    */
   private Optional<KnownCategory> category(long userId, String userName, Derived d, TransactionInput t) {
     Optional<KnownCategory> known = repo.knownCategory(userId, d.reasonKey())
-        .filter(k -> Category.fromLabel(k.category()).filter(c -> c.fits(t.direction())).isPresent());
+        .filter(k -> catalog.category(userId, k.category(), t.direction()).isPresent());
     if (known.filter(k -> "manual".equals(k.source())).isPresent()) return known;
     Optional<Category> rule = OwnMoney.categoryFor(d.merchant() != null ? d.merchant() : t.reason(), userName)
         .filter(c -> c.fits(t.direction()));
     if (rule.isPresent()) return Optional.of(new KnownCategory(rule.get().label(), "rule"));
-    if (t.category() != null) return Optional.of(new KnownCategory(t.category().label(), "rule"));
+    if (t.category() != null) return Optional.of(new KnownCategory(t.category(), "rule"));
     if (known.isPresent() || !t.isCredit()) return known;
     return Optional.of(new KnownCategory(Category.RECEIVED.label(), "rule"));
   }
@@ -160,10 +167,10 @@ public class TransactionService {
   @Transactional
   public void edit(long userId, String userName, Transaction old, TransactionInput t) {
     Derived d = derive(t);
-    String category = old.category() == null ? null : old.category().label();
+    String category = old.category();
     String source = old.categorySource();
     boolean merchantChanged = !d.reasonKey().equals(repo.reasonKeyOf(userId, old.id()).orElse(null));
-    boolean fits = old.category() == null || old.category().fits(t.direction());
+    boolean fits = category == null || catalog.category(userId, category, t.direction()).isPresent();
     if ((merchantChanged && !"manual".equals(source)) || !fits) {
       Optional<KnownCategory> known = category(userId, userName, d, t);
       category = known.map(KnownCategory::category).orElse(null);
@@ -210,10 +217,11 @@ public class TransactionService {
    * Manual override; also re-labels other non-manual transactions of the same merchant and remembers it. Marking one
    * side of a move between own accounts as Self Transfer marks the other side too.
    */
+  /** {@code category} must already be one of the user's labels for the transaction's direction. */
   @Transactional
-  public void setCategory(long userId, Transaction tx, Category category) {
-    repo.reasonKeyOf(userId, tx.id()).ifPresent(key -> repo.setManualCategory(userId, tx.id(), key, category.label()));
-    if (category == Category.SELF_TRANSFER) {
+  public void setCategory(long userId, Transaction tx, String category) {
+    repo.reasonKeyOf(userId, tx.id()).ifPresent(key -> repo.setManualCategory(userId, tx.id(), key, category));
+    if (Category.SELF_TRANSFER.label().equals(category)) {
       repo.ownTransferCounterpart(
               userId, tx.id(), tx.direction(), tx.date(), tx.amountMinor(), tx.currency(), tx.bank())
           .ifPresent(other -> repo.markSelfTransfer(userId, other.id()));
@@ -223,7 +231,7 @@ public class TransactionService {
   @Transactional
   public int applyAiCategories(long userId, List<CategoryUpdate> updates) {
     int changed = 0;
-    for (CategoryUpdate u : updates) changed += repo.applyAiCategory(userId, u.reasonKey(), u.category().label());
+    for (CategoryUpdate u : updates) changed += repo.applyAiCategory(userId, u.reasonKey(), u.category());
     return changed;
   }
 

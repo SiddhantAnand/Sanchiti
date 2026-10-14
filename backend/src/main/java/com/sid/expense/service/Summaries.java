@@ -71,7 +71,7 @@ public final class Summaries {
 
   public record DailyTotal(LocalDate date, double total) {}
 
-  public record Largest(LocalDate date, double amount, String payee, Category category) {}
+  public record Largest(LocalDate date, double amount, String payee, String category) {}
 
   public record PayeeTotal(String payee, int count, double total) {}
 
@@ -98,9 +98,9 @@ public final class Summaries {
     List<Transaction> receivedRows = creditsInr.stream().filter(t -> !isOwnTransfer(t)).toList();
     long receivedMinor = receivedRows.stream().mapToLong(Transaction::amountMinor).sum();
     List<Transaction> investments = inr.stream().filter(Summaries::isInvestment).toList();
-    List<Transaction> own = inr.stream().filter(t -> t.category() != null && t.category().isOwnTransfer()).toList();
+    List<Transaction> own = inr.stream().filter(Transaction::isOwnTransfer).toList();
     List<Transaction> base = inr.stream()
-        .filter(t -> !isInvestment(t) && (t.category() == null || !t.category().isOwnTransfer()))
+        .filter(t -> !t.isInvestment() && !t.isOwnTransfer())
         .toList();
     long totalMinor = base.stream().mapToLong(Transaction::amountMinor).sum();
     int days = (int) Math.max(1, ChronoUnit.DAYS.between(from, to) + 1);
@@ -132,11 +132,11 @@ public final class Summaries {
         receivedRows.size(),
         major(ownIn.stream().mapToLong(Transaction::amountMinor).sum()),
         major(receivedMinor - totalMinor - investedMinor),
-        group(base, t -> t.category() == null ? Category.UNCATEGORIZED : t.category().label()).stream()
+        group(base, t -> t.category() == null ? Category.UNCATEGORIZED : t.category()).stream()
             .map(g -> new CategoryTotal(g.label(), major(g.totalMinor()), g.count(),
                 totalMinor == 0 ? 0 : round1(g.totalMinor() * 100.0 / totalMinor)))
             .toList(),
-        group(receivedRows, t -> t.category() == null ? Category.RECEIVED.label() : t.category().label()).stream()
+        group(receivedRows, t -> t.category() == null ? Category.RECEIVED.label() : t.category()).stream()
             .map(g -> new CategoryTotal(g.label(), major(g.totalMinor()), g.count(),
                 receivedMinor == 0 ? 0 : round1(g.totalMinor() * 100.0 / receivedMinor)))
             .toList(),
@@ -211,7 +211,7 @@ public final class Summaries {
   }
 
   private static boolean isOwnTransfer(Transaction t) {
-    return t.category() != null && t.category().isOwnTransfer();
+    return t.isOwnTransfer();
   }
 
   private static List<BankDeductions> deductedByBank(List<Transaction> inr) {
@@ -222,7 +222,7 @@ public final class Summaries {
               .toList();
           long invested = rows.stream().filter(Summaries::isInvestment).mapToLong(Transaction::amountMinor).sum();
           long own = rows.stream()
-              .filter(t -> t.category() != null && t.category().isOwnTransfer())
+              .filter(Transaction::isOwnTransfer)
               .mapToLong(Transaction::amountMinor)
               .sum();
           return new BankDeductions(g.label(), major(g.totalMinor()), g.count(),
@@ -245,7 +245,7 @@ public final class Summaries {
   }
 
   private static boolean isInvestment(Transaction t) {
-    return t.category() == Category.INVESTMENTS_SAVINGS;
+    return t.isInvestment();
   }
 
   private static long minor(double v) {

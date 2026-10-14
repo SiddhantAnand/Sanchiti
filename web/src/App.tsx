@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CircleHelp, Inbox, Landmark, LayoutDashboard, LoaderCircle, LogOut, ReceiptText, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import { CircleHelp, Inbox, Landmark, LayoutDashboard, LoaderCircle, LogOut, ReceiptText, Settings as SettingsIcon, Sparkles, Users } from 'lucide-react';
 import { api, setUnauthorizedHandler, type Direction, type Me, type ReviewItem, type Transaction } from './api';
 import {
   MONTHS, PERIODS, greeting, initials, isPeriodKey, period as makePeriod, periodParts, rangeLabel, type PeriodKey,
@@ -13,10 +13,11 @@ import { Overview } from './pages/Overview';
 import { Review } from './pages/Review';
 import { Settings } from './pages/Settings';
 import { Help } from './pages/Help';
+import { Split, SplitTransaction } from './pages/Split';
 import { Transactions } from './pages/Transactions';
 
-type Route = 'overview' | 'transactions' | 'banks' | 'review' | 'insights' | 'settings' | 'help';
-const ROUTES: Route[] = ['overview', 'transactions', 'banks', 'review', 'insights', 'settings', 'help'];
+type Route = 'overview' | 'transactions' | 'banks' | 'split' | 'review' | 'insights' | 'settings' | 'help';
+const ROUTES: Route[] = ['overview', 'transactions', 'banks', 'split', 'review', 'insights', 'settings', 'help'];
 
 function parseHash(): { route: Route; category: string; bank: string; kind: string; direction: Direction } {
   const [path, query] = window.location.hash.replace(/^#\/?/, '').split('?');
@@ -62,9 +63,25 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
   const [reviewCount, setReviewCount] = useState(0);
   const [drawer, setDrawer] = useState<DrawerMode | null>(null);
   const [gemini, setGemini] = useState(false);
+  const [splitTx, setSplitTx] = useState<Transaction | null>(null);
 
   const period = makePeriod(periodKey);
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  /** Saves a new category and returns its stored spelling. */
+  const addCategory = useCallback(async (name: string, direction: Direction) => {
+    const c = await api.addCategory(name, direction);
+    setCategories(c.categories);
+    setCreditCategories(c.creditCategories);
+    const list = direction === 'credit' ? c.creditCategories : c.categories;
+    return list.find((x) => x.toLowerCase() === name.trim().toLowerCase()) ?? name.trim();
+  }, []);
+  const addBank = useCallback(async (name: string) => {
+    const b = await api.addBank(name);
+    setBanks(b.banks);
+    const key = (s: string) => s.toLowerCase().replace(/\b(bank|ltd|limited|the|india)\b|[^a-z0-9]/g, '');
+    return b.banks.find((x) => key(x) === key(name)) ?? name.trim();
+  }, []);
 
   useEffect(() => {
     const h = () => setLocation(parseHash());
@@ -94,6 +111,7 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
     overview: [`${greeting()}, ${first}`, `Money in and out · ${rangeLabel(period.from, period.to)}`],
     transactions: ['Transactions', `Every debit and credit, editable · ${rangeLabel(period.from, period.to)}`],
     banks: ['Banks', `Money in and out of each account · ${rangeLabel(period.from, period.to)}`],
+    split: ['Split', 'Shared expenses with friends · kept apart from your own spending'],
     review: ['Review queue', 'Bank SMS that could not be filed on their own'],
     insights: ['Insights', 'Weekly read on your spending, written by Gemini'],
     settings: ['Settings', me.admin ? 'Password, backup, Gemini and people you invite' : 'Password and backup'],
@@ -105,6 +123,7 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'transactions', label: 'Transactions', icon: ReceiptText },
     { id: 'banks', label: 'Banks', icon: Landmark },
+    { id: 'split', label: 'Split', icon: Users },
     { id: 'review', label: 'Review', icon: Inbox, badge: reviewCount },
     { id: 'insights', label: 'Insights', icon: Sparkles },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
@@ -172,12 +191,13 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
         )}
         {route === 'transactions' && (
           <Transactions key={`${category}|${bank}|${kind}|${direction}`} period={period} refreshKey={refreshKey}
-            categories={categories} creditCategories={creditCategories}
+            categories={categories} creditCategories={creditCategories} onAddCategory={addCategory}
             initialCategory={category} initialBank={bank} initialKind={kind} initialDirection={direction}
             aiEnabled={ai} onChanged={refresh} onAdd={(d) => setDrawer({ kind: 'add', direction: d })}
-            onEdit={(tx: Transaction) => setDrawer({ kind: 'edit', tx })} />
+            onEdit={(tx: Transaction) => setDrawer({ kind: 'edit', tx })} onSplit={setSplitTx} />
         )}
         {route === 'banks' && <Banks period={period} refreshKey={refreshKey} />}
+        {route === 'split' && <Split me={me} />}
         {route === 'review' && (
           <Review refreshKey={refreshKey} onChanged={refresh} onFix={(item: ReviewItem) => setDrawer({ kind: 'review', item })} />
         )}
@@ -188,9 +208,11 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
 
       {drawer && (
         <TxDrawer mode={drawer} categories={categories} creditCategories={creditCategories} banks={banks} aiEnabled={ai}
+          onAddCategory={addCategory} onAddBank={addBank}
           onClose={() => setDrawer(null)} onSaved={() => { setDrawer(null); refresh(); }} />
       )}
       {gemini && <GeminiModal onClose={() => setGemini(false)} onDone={refresh} />}
+      {splitTx && <SplitTransaction tx={splitTx} onClose={() => setSplitTx(null)} onDone={() => { setSplitTx(null); refresh(); }} />}
     </div>
   );
 }

@@ -47,7 +47,7 @@ public final class Banks {
     return key.isEmpty() ? Optional.empty() : Optional.ofNullable(byKey.get(key));
   }
 
-  static String key(String name) {
+  public static String key(String name) {
     if (name == null) return "";
     return Arrays.stream(name.toLowerCase(Locale.ROOT).split("[^a-z0-9]+"))
         .filter(w -> !w.isEmpty() && !GENERIC.contains(w))

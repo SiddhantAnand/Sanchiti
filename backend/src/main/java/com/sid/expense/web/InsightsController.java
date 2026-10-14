@@ -2,8 +2,6 @@ package com.sid.expense.web;
 
 import com.sid.expense.ai.AiClient;
 import com.sid.expense.config.AppProperties;
-import com.sid.expense.domain.Banks;
-import com.sid.expense.domain.Category;
 import com.sid.expense.domain.Dates;
 import com.sid.expense.domain.Dates.Period;
 import com.sid.expense.domain.Direction;
@@ -12,16 +10,19 @@ import com.sid.expense.repo.AnalysisRepository.StoredAnalysis;
 import com.sid.expense.repo.TransactionRepository;
 import com.sid.expense.service.AnalysisService;
 import com.sid.expense.service.AnalysisService.WeeklyResult;
+import com.sid.expense.service.Catalog;
 import com.sid.expense.service.Categorizer;
 import com.sid.expense.service.Summaries;
 import com.sid.expense.service.Summaries.Summary;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestAttribute;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -45,16 +46,18 @@ public class InsightsController {
   private final AnalysisRepository analyses;
   private final Categorizer categorizer;
   private final AnalysisService analysis;
+  private final Catalog catalog;
 
   public InsightsController(
       AppProperties props, AiClient ai, TransactionRepository transactions, AnalysisRepository analyses,
-      Categorizer categorizer, AnalysisService analysis) {
+      Categorizer categorizer, AnalysisService analysis, Catalog catalog) {
     this.props = props;
     this.ai = ai;
     this.transactions = transactions;
     this.analyses = analyses;
     this.categorizer = categorizer;
     this.analysis = analysis;
+    this.catalog = catalog;
   }
 
   @GetMapping("/health")
@@ -63,13 +66,37 @@ public class InsightsController {
   }
 
   @GetMapping("/api/categories")
-  public Categories categories() {
-    return new Categories(Category.labels(Direction.DEBIT), Category.labels(Direction.CREDIT));
+  public Categories categories(@RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user) {
+    return new Categories(catalog.categories(user.id(), Direction.DEBIT), catalog.categories(user.id(), Direction.CREDIT));
+  }
+
+  /** Adds one of the user's own categories: {name, direction?}. Returns the full lists. */
+  @PostMapping("/api/categories")
+  public Categories addCategory(@RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user, @RequestBody Map<String, Object> body) {
+    Direction direction = Direction.parse(body.get("direction") == null ? "debit" : String.valueOf(body.get("direction")))
+        .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "direction must be debit or credit"));
+    try {
+      catalog.addCategory(user.id(), body.get("name") instanceof String s ? s : null, direction);
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+    return categories(user);
   }
 
   @GetMapping("/api/banks")
-  public BankList banks() {
-    return new BankList(new Banks(props.knownBanks()).canonicalNames());
+  public BankList banks(@RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user) {
+    return new BankList(catalog.banks(user.id()).canonicalNames());
+  }
+
+  /** Adds one of the user's own banks: {name}. Returns the full list. */
+  @PostMapping("/api/banks")
+  public BankList addBank(@RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user, @RequestBody Map<String, Object> body) {
+    try {
+      catalog.addBank(user.id(), body.get("name") instanceof String s ? s : null);
+    } catch (IllegalArgumentException e) {
+      throw new ApiException(HttpStatus.BAD_REQUEST, e.getMessage());
+    }
+    return banks(user);
   }
 
   @GetMapping("/api/summary")

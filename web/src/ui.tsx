@@ -101,6 +101,42 @@ export function Modal(props: { onClose: () => void; hero: ReactNode; children: R
   );
 }
 
+type PromptRequest = { title: string; label: string; placeholder?: string; initial?: string; resolve: (v: string | null) => void };
+const PromptContext = createContext<(p: Omit<PromptRequest, 'resolve'>) => Promise<string | null>>(async () => null);
+/** Asks for one line of text in a small dialog; resolves to null when cancelled. */
+export const usePrompt = () => useContext(PromptContext);
+
+export function PromptProvider({ children }: { children: ReactNode }) {
+  const [req, setReq] = useState<PromptRequest | null>(null);
+  const [value, setValue] = useState('');
+  const ask = useCallback((p: Omit<PromptRequest, 'resolve'>) => new Promise<string | null>((resolve) => {
+    setValue(p.initial ?? '');
+    setReq({ ...p, resolve });
+  }), []);
+  const close = useCallback((v: string | null) => {
+    setReq((r) => { r?.resolve(v); return null; });
+  }, []);
+  return (
+    <PromptContext.Provider value={ask}>
+      {children}
+      {req && (
+        <Modal onClose={() => close(null)} hero={<h2 className="card-title" style={{ fontSize: 18 }}>{req.title}</h2>}
+          foot={<>
+            <button className="btn btn-ghost" onClick={() => close(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={!value.trim()} onClick={() => close(value.trim())}>Save</button>
+          </>}>
+          <label className="field">
+            <span>{req.label}</span>
+            <input className="input" autoFocus maxLength={60} placeholder={req.placeholder} value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && value.trim()) close(value.trim()); }} />
+          </label>
+        </Modal>
+      )}
+    </PromptContext.Provider>
+  );
+}
+
 export function Empty({ icon, title, children }: { icon: ReactNode; title: string; children?: ReactNode }) {
   return (
     <div className="empty">

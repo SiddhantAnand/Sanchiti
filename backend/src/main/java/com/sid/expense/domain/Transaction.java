@@ -2,6 +2,7 @@ package com.sid.expense.domain;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 public record Transaction(
@@ -16,7 +17,8 @@ public record Transaction(
     String upiRef,
     String cardLast4,
     String bank,
-    Category category,
+    /** A built-in category label or one the user added; null while uncategorised. */
+    String category,
     String categorySource,
     String note,
     OffsetDateTime createdAt) {
@@ -27,6 +29,18 @@ public record Transaction(
 
   public boolean isCredit() {
     return direction == Direction.CREDIT;
+  }
+
+  public Optional<Category> builtInCategory() {
+    return Category.fromLabel(category);
+  }
+
+  public boolean isOwnTransfer() {
+    return builtInCategory().filter(Category::isOwnTransfer).isPresent();
+  }
+
+  public boolean isInvestment() {
+    return builtInCategory().filter(c -> c == Category.INVESTMENTS_SAVINGS).isPresent();
   }
 
   /** Display name used for grouping: the parsed merchant, else the raw reason. */

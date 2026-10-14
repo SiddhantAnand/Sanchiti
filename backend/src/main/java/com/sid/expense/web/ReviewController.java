@@ -63,7 +63,7 @@ public class ReviewController {
       @RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user, @PathVariable long id, @RequestBody Object body,
       @RequestParam(defaultValue = "false") boolean allowDuplicates) {
     if (!reviews.exists(user.id(), id)) throw new ApiException(HttpStatus.NOT_FOUND, "Review item not found");
-    var checked = service.check(body);
+    var checked = service.check(user.id(), body);
     if (checked.issue() != null) throw new ApiException(HttpStatus.BAD_REQUEST, checked.issue());
     var result = service.ingest(user.id(), user.name(), List.of(checked.input()), List.of(), allowDuplicates);
     if (result.insertedIds().isEmpty()) {
@@ -91,7 +91,7 @@ public class ReviewController {
           SmsParser.receivedDate(received == null ? null : String.valueOf(received)));
     }).toList();
 
-    List<SmsReader.Outcome> outcomes = reader.read(sms);
+    List<SmsReader.Outcome> outcomes = reader.read(user.id(), sms);
     int saved = 0;
     int alreadySaved = 0;
     for (int i = 0; i < items.size(); i++) {

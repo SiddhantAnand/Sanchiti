@@ -420,6 +420,157 @@ class ApiTest {
   }
 
   @Test
+  void addsOwnCategoriesAndBanks() throws Exception {
+    postTx("""
+        {"date": "2026-10-05", "amount": 40, "reason": "Paws store", "bankName": "Axis Bank"}""")
+        .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error").value("Unknown bank: Axis Bank"));
+    mvc.perform(authed(post("/api/banks")).contentType(MediaType.APPLICATION_JSON).content("{\"name\": \"axis bank\"}"))
+        .andExpect(status().isOk()).andExpect(jsonPath("$.banks", org.hamcrest.Matchers.hasItem("Axis bank")));
+    String id = firstInsertedId("""
+        {"date": "2026-10-05", "amount": 40, "reason": "Paws store", "bankName": "Axis Bank"}""");
+
+    mvc.perform(authed(post("/api/categories")).contentType(MediaType.APPLICATION_JSON).content("{\"name\": \"Pet care\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.categories", org.hamcrest.Matchers.hasItem("Pet care")))
+        .andExpect(jsonPath("$.creditCategories", not(org.hamcrest.Matchers.hasItem("Pet care"))));
+    mvc.perform(authed(post("/api/categories")).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"name\": \"salary\", \"direction\": \"debit\"}"))
+        .andExpect(status().isBadRequest());
+    patchTx(id, "{\"category\": \"pet care\"}").andExpect(jsonPath("$.category").value("Pet care"));
+    postTx("""
+        {"date": "2026-10-06", "amount": 60, "reason": "Paws store"}""")
+        .andExpect(jsonPath("$.inserted[0].category").value("Pet care"));
+    mvc.perform(authed(get("/api/summary?from=2026-10-01&to=2026-10-07")))
+        .andExpect(jsonPath("$.byCategory[0].category").value("Pet care"))
+        .andExpect(jsonPath("$.byCategory[0].total").value(100.0));
+    mvc.perform(authed(get("/api/transactions?category=Pet care"))).andExpect(jsonPath("$.total").value(2));
+  }
+
+  @Test
+  void splitsExpensesInSharedGroupsWithoutTouchingTransactions() throws Exception {
+    String code = JSON.readTree(mvc.perform(authed(post("/api/account/invites")))
+        .andReturn().getResponse().getContentAsString()).get("code").asString();
+    mvc.perform(post("/api/auth/signup").contentType(MediaType.APPLICATION_JSON).content(JSON.writeValueAsString(
+        Map.of("invite", code, "login", "rahul", "name", "Rahul", "password", "rahul-password"))));
+    Cookie rahul = signIn("rahul", "rahul-password");
+    String txId = firstInsertedId("{\"date\": \"2026-10-05\", \"amount\": 900, \"reason\": \"Dinner at Toit\"}");
+
+    long group = JSON.readTree(mvc.perform(authed(post("/api/split/groups")).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"name\": \"Goa trip\", \"members\": [\"Rahul R\", \"Priya\"]}"))
+        .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("id").asLong();
+    var detail = JSON.readTree(mvc.perform(authed(get("/api/split/groups/" + group)))
+        .andReturn().getResponse().getContentAsString());
+    long me = detail.get("myMemberId").asLong();
+    long rahulM = detail.get("members").get(1).get("id").asLong();
+    long priyaM = detail.get("members").get(2).get("id").asLong();
+
+    // Rahul can't see it until he's linked.
+    mvc.perform(as(rahul, get("/api/split/groups/" + group))).andExpect(status().isNotFound());
+    mvc.perform(authed(patch("/api/split/groups/" + group + "/members/" + rahulM)).contentType(MediaType.APPLICATION_JSON)
+        .content("{\"login\": \"rahul\"}")).andExpect(status().isOk());
+
+    String expense = "{\"description\": \"Dinner\", \"amount\": 900, \"date\": \"2026-10-05\", \"paidBy\": %d, "
+        + "\"split\": \"equal\", \"members\": [%d, %d, %d], \"transactionId\": \"%s\"}";
+    mvc.perform(authed(post("/api/split/groups/" + group + "/expenses")).contentType(MediaType.APPLICATION_JSON)
+            .content(expense.formatted(me, me, rahulM, priyaM, txId)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + me + ")].net").value(contains(600.0)))
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + rahulM + ")].net").value(contains(-300.0)))
+        .andExpect(jsonPath("$.expenses[0].transactionId").value(txId));
+    mvc.perform(authed(post("/api/split/groups/" + group + "/expenses")).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"description\": \"Cab\", \"amount\": 100, \"date\": \"2026-10-05\", \"paidBy\": " + rahulM
+                + ", \"split\": \"exact\", \"shares\": [{\"memberId\": " + me + ", \"amount\": 60}]}"))
+        .andExpect(status().isBadRequest()).andExpect(jsonPath("$.error").value(containsString("add up to")));
+
+    // Rahul sees only the group: shared expense without the owner's transaction, and none of the owner's data.
+    mvc.perform(as(rahul, get("/api/split/groups")))
+        .andExpect(jsonPath("$.groups[0].name").value("Goa trip"))
+        .andExpect(jsonPath("$.groups[0].myBalance").value(-300.0));
+    mvc.perform(as(rahul, get("/api/split/groups/" + group)))
+        .andExpect(jsonPath("$.isOwner").value(false))
+        .andExpect(jsonPath("$.expenses[0].transactionId").doesNotExist());
+    mvc.perform(as(rahul, get("/api/transactions"))).andExpect(jsonPath("$.total").value(0));
+
+    // Rahul pays the owner back: pending until the owner (who was paid) approves.
+    String settle = "{\"from\": %d, \"to\": %d, \"amount\": 300}";
+    mvc.perform(as(rahul, post("/api/split/groups/" + group + "/settlements")).contentType(MediaType.APPLICATION_JSON)
+            .content(settle.formatted(rahulM, me)))
+        .andExpect(jsonPath("$.settlements[0].status").value("PENDING"))
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + rahulM + ")].net").value(contains(-300.0)));
+    long settlement = JSON.readTree(mvc.perform(authed(get("/api/split/groups/" + group)))
+        .andReturn().getResponse().getContentAsString()).get("settlements").get(0).get("id").asLong();
+    mvc.perform(as(rahul, post("/api/split/groups/" + group + "/settlements/" + settlement + "/approve")))
+        .andExpect(status().isForbidden());
+    mvc.perform(authed(post("/api/split/groups/" + group + "/settlements/" + settlement + "/approve")))
+        .andExpect(jsonPath("$.settlements[0].status").value("APPROVED"))
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + rahulM + ")].net").value(contains(0.0)))
+        .andExpect(jsonPath("$.debts[0].from").value(priyaM))
+        .andExpect(jsonPath("$.debts[0].amount").value(300.0));
+
+    // Only the owner manages members; split money never reaches the owner's summary.
+    mvc.perform(as(rahul, post("/api/split/groups/" + group + "/members")).contentType(MediaType.APPLICATION_JSON)
+        .content("{\"name\": \"Stranger\"}")).andExpect(status().isForbidden());
+    mvc.perform(authed(get("/api/summary?from=2026-10-01&to=2026-10-07"))).andExpect(jsonPath("$.total").value(900.0));
+
+    // Only whoever added an expense edits it; anyone else's delete waits for that person's approval.
+    long dinner = JSON.readTree(mvc.perform(authed(get("/api/split/groups/" + group)))
+        .andReturn().getResponse().getContentAsString()).get("expenses").get(0).get("id").asLong();
+    String edited = "{\"description\": \"Dinner + dessert\", \"amount\": 600, \"date\": \"2026-10-05\", \"paidBy\": %d, "
+        + "\"split\": \"equal\", \"members\": [%d, %d]}";
+    mvc.perform(as(rahul, put("/api/split/groups/" + group + "/expenses/" + dinner)).contentType(MediaType.APPLICATION_JSON)
+        .content(edited.formatted(me, me, rahulM))).andExpect(status().isForbidden());
+    mvc.perform(authed(put("/api/split/groups/" + group + "/expenses/" + dinner)).contentType(MediaType.APPLICATION_JSON)
+            .content(edited.formatted(me, me, rahulM)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.expenses[0].description").value("Dinner + dessert"))
+        .andExpect(jsonPath("$.expenses[0].shares.length()").value(2))
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + priyaM + ")].net").value(contains(0.0)));
+
+    String expensePath = "/api/split/groups/" + group + "/expenses/" + dinner;
+    mvc.perform(as(rahul, delete(expensePath)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.expenses[0].id").value(dinner))
+        .andExpect(jsonPath("$.expenses[0].deleteRequest.mine").value(true))
+        .andExpect(jsonPath("$.expenses[0].deleteRequest.canDecide").value(false));
+    mvc.perform(as(rahul, delete(expensePath))).andExpect(status().isConflict());
+    mvc.perform(as(rahul, post(expensePath + "/delete/approve"))).andExpect(status().isForbidden());
+    mvc.perform(authed(get("/api/split/groups/" + group)))
+        .andExpect(jsonPath("$.expenses[0].deleteRequest.by").value(rahulM))
+        .andExpect(jsonPath("$.expenses[0].deleteRequest.canDecide").value(true));
+    mvc.perform(authed(post(expensePath + "/delete/reject")))
+        .andExpect(jsonPath("$.expenses[0].id").value(dinner))
+        .andExpect(jsonPath("$.expenses[0].deleteRequest").doesNotExist());
+    mvc.perform(as(rahul, delete(expensePath))).andExpect(status().isOk());
+    mvc.perform(authed(post(expensePath + "/delete/approve")))
+        .andExpect(jsonPath("$.expenses.length()").value(0));
+
+    // The group owner gets no special pass on someone else's expense.
+    mvc.perform(as(rahul, post("/api/split/groups/" + group + "/expenses")).contentType(MediaType.APPLICATION_JSON)
+        .content("{\"description\": \"Cab\", \"amount\": 100, \"date\": \"2026-10-05\", \"paidBy\": " + rahulM
+            + ", \"split\": \"equal\", \"members\": [" + me + ", " + rahulM + "]}")).andExpect(status().isOk());
+    long cab = JSON.readTree(mvc.perform(authed(get("/api/split/groups/" + group)))
+        .andReturn().getResponse().getContentAsString()).get("expenses").get(0).get("id").asLong();
+    mvc.perform(authed(get("/api/split/groups/" + group)))
+        .andExpect(jsonPath("$.expenses[0].mine").value(false))
+        .andExpect(jsonPath("$.expenses[0].addedBy").value(rahulM));
+    mvc.perform(authed(delete("/api/split/groups/" + group + "/expenses/" + cab)))
+        .andExpect(jsonPath("$.expenses[0].deleteRequest.mine").value(true));
+    mvc.perform(as(rahul, post("/api/split/groups/" + group + "/expenses/" + cab + "/delete/approve")))
+        .andExpect(jsonPath("$.expenses.length()").value(0));
+
+    // Unlinking hides the group from Rahul again; the owner's own entry can't be unlinked.
+    mvc.perform(authed(patch("/api/split/groups/" + group + "/members/" + rahulM)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"login\": \"\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.members[1].login").doesNotExist());
+    mvc.perform(as(rahul, get("/api/split/groups/" + group))).andExpect(status().isNotFound());
+    mvc.perform(authed(patch("/api/split/groups/" + group + "/members/" + me)).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"login\": \"\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.members[0].login").value("siddhant"));
+  }
+
+  @Test
   void remembersHandSetCategoryForTheNextPaymentToTheSamePayee() throws Exception {
     String sms = """
         [{"received": "%s", "sender": "HDFCBK",

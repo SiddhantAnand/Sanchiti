@@ -17,6 +17,8 @@ public class ExportRepository {
     USER_TABLES.put("reason_categories", "reason_key");
     USER_TABLES.put("review", "id");
     USER_TABLES.put("analyses", "id");
+    USER_TABLES.put("user_categories", "id");
+    USER_TABLES.put("user_banks", "id");
   }
 
   private final JdbcClient jdbc;

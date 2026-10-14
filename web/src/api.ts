@@ -159,7 +159,10 @@ export const api = {
   clearAi: () => request<AiStatus>('DELETE', '/api/account/ai'),
   health: () => request<{ ok: boolean; ai: boolean }>('GET', '/health'),
   categories: () => request<{ categories: string[]; creditCategories: string[] }>('GET', '/api/categories'),
+  addCategory: (name: string, direction: Direction) =>
+    request<{ categories: string[]; creditCategories: string[] }>('POST', '/api/categories', { name, direction }),
   banks: () => request<{ banks: string[] }>('GET', '/api/banks'),
+  addBank: (name: string) => request<{ banks: string[] }>('POST', '/api/banks', { name }),
   summary: (from: string, to: string) => request<Summary>('GET', `/api/summary${qs({ from, to })}`),
   span: () => request<{ first: string | null; last: string | null }>('GET', '/api/transactions/span'),
   transactions: (p: {
@@ -183,4 +186,59 @@ export const api = {
       `/api/analysis/run${qs({ to, force: force ? 'true' : undefined })}`,
     ),
   analyses: () => request<{ items: Analysis[] }>('GET', '/api/analysis?limit=20'),
+  splitPeople: () => request<{ people: { login: string; name: string }[] }>('GET', '/api/split/people'),
+  splitLinked: () => request<{ transactionIds: string[] }>('GET', '/api/split/linked'),
+  splitGroups: () => request<{ groups: SplitGroupSummary[] }>('GET', '/api/split/groups'),
+  createSplitGroup: (name: string, members: string[]) =>
+    request<{ id: number }>('POST', '/api/split/groups', { name, members }),
+  splitGroup: (id: number) => request<SplitGroup>('GET', `/api/split/groups/${id}`),
+  renameSplitGroup: (id: number, name: string) => request<SplitGroup>('PATCH', `/api/split/groups/${id}`, { name }),
+  deleteSplitGroup: (id: number) => request<void>('DELETE', `/api/split/groups/${id}`),
+  addSplitMember: (id: number, name: string, login?: string) =>
+    request<SplitGroup>('POST', `/api/split/groups/${id}/members`, { name, login }),
+  updateSplitMember: (id: number, memberId: number, patch: { name?: string; login?: string }) =>
+    request<SplitGroup>('PATCH', `/api/split/groups/${id}/members/${memberId}`, patch),
+  removeSplitMember: (id: number, memberId: number) =>
+    request<SplitGroup>('DELETE', `/api/split/groups/${id}/members/${memberId}`),
+  addSplitExpense: (id: number, e: NewSplitExpense) => request<SplitGroup>('POST', `/api/split/groups/${id}/expenses`, e),
+  updateSplitExpense: (id: number, expenseId: number, e: NewSplitExpense) =>
+    request<SplitGroup>('PUT', `/api/split/groups/${id}/expenses/${expenseId}`, e),
+  /** Deletes your own expense; for anyone else's it asks them to approve. */
+  deleteSplitExpense: (id: number, expenseId: number) =>
+    request<SplitGroup>('DELETE', `/api/split/groups/${id}/expenses/${expenseId}`),
+  decideSplitDelete: (id: number, expenseId: number, approve: boolean) =>
+    request<SplitGroup>('POST', `/api/split/groups/${id}/expenses/${expenseId}/delete/${approve ? 'approve' : 'reject'}`),
+  settleSplit: (id: number, s: { from: number; to: number; amount: string; date: string }) =>
+    request<SplitGroup>('POST', `/api/split/groups/${id}/settlements`, s),
+  decideSettlement: (id: number, settlementId: number, approve: boolean) =>
+    request<SplitGroup>('POST', `/api/split/groups/${id}/settlements/${settlementId}/${approve ? 'approve' : 'reject'}`),
+  deleteSettlement: (id: number, settlementId: number) =>
+    request<SplitGroup>('DELETE', `/api/split/groups/${id}/settlements/${settlementId}`),
+};
+
+export type SplitGroupSummary = { id: number; name: string; ownerName: string; isOwner: boolean; members: number; myBalance: number };
+
+export type SplitGroup = {
+  id: number;
+  name: string;
+  ownerName: string;
+  isOwner: boolean;
+  myMemberId: number | null;
+  members: { id: number; name: string; login: string | null; isMe: boolean }[];
+  expenses: {
+    id: number; description: string; amount: number; date: string; paidBy: number;
+    shares: { memberId: number; amount: number }[]; mine: boolean; transactionId: string | null;
+    addedBy: number | null; deleteRequest: { by: number | null; mine: boolean; canDecide: boolean } | null;
+  }[];
+  settlements: {
+    id: number; from: number; to: number; amount: number; date: string;
+    status: 'PENDING' | 'APPROVED' | 'REJECTED'; canDecide: boolean; mine: boolean;
+  }[];
+  balances: { memberId: number; net: number }[];
+  debts: { from: number; to: number; amount: number }[];
+};
+
+export type NewSplitExpense = {
+  description: string; amount: string; date: string; paidBy: number; split: 'equal' | 'exact';
+  members?: number[]; shares?: { memberId: number; amount: string }[]; transactionId?: string;
 };

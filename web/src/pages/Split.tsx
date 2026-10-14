@@ -176,6 +176,7 @@ function GroupView(props: {
     return m ? (m.isMe ? 'You' : m.name) : 'Someone';
   };
   const balance = (id: number) => g.balances.find((b) => b.memberId === id)?.net ?? 0;
+  const mine = g.balances.find((b) => b.memberId === g.myMemberId);
   const pending = g.settlements.filter((s) => s.status === 'PENDING');
   const deleteRequests = g.expenses.filter((e) => e.deleteRequest);
   const addedBy = (e: SplitExpense) => (e.mine ? 'You' : e.addedBy !== null ? name(e.addedBy) : g.ownerName);
@@ -200,9 +201,22 @@ function GroupView(props: {
             {g.isOwner && <button className="icon-btn danger" aria-label="Delete group" onClick={props.onDelete}><Trash size={15} /></button>}
           </div>
         </div>
+        {mine && (
+          <div className="split-me">
+            <div><span>You paid</span><b className="num">{money(mine.paid)}</b></div>
+            <div><span>Your share</span><b className="num">{money(mine.share)}</b><small>what you actually spent</small></div>
+            <div>
+              <span>{mine.net > 0.004 ? 'You get back' : mine.net < -0.004 ? 'You owe' : 'Balance'}</span>
+              <b className="num" style={{ color: mine.net > 0.004 ? 'var(--teal)' : mine.net < -0.004 ? 'var(--rose)' : undefined }}>
+                {Math.abs(mine.net) > 0.004 ? money(Math.abs(mine.net)) : 'Settled'}
+              </b>
+            </div>
+          </div>
+        )}
         <div className="split-members">
           {g.members.map((m) => {
             const net = balance(m.id);
+            const b = g.balances.find((x) => x.memberId === m.id);
             return (
               <div className="split-member" key={m.id}>
                 <span className="avatar" style={{ width: 30, height: 30, fontSize: 12 }}>{m.name.slice(0, 1).toUpperCase()}</span>
@@ -210,6 +224,7 @@ function GroupView(props: {
                   <div className="title">{m.isMe ? `${m.name} (you)` : m.name}</div>
                   <div className="sub">
                     {m.login ? <><Link2 size={11} /> @{m.login}</> : 'name only'}
+                    {b && ` · paid ${money(b.paid)} · share ${money(b.share)}`}
                     {' · '}
                     <span style={{ color: net > 0.004 ? 'var(--teal)' : net < -0.004 ? 'var(--rose)' : undefined }}>
                       {net > 0.004 ? `gets ${money(net)}` : net < -0.004 ? `owes ${money(-net)}` : 'settled'}

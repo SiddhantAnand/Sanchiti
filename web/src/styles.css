@@ -413,6 +413,12 @@ a { color: var(--primary); text-decoration: none; }
 .split-matches button:hover { background: var(--row-hover); }
 .split-shares { display: flex; flex-direction: column; gap: 6px; }
 .split-share { display: flex; align-items: center; gap: 10px; padding: 6px 4px; font-size: 13.5px; }
+.split-me { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 14px; }
+.split-me > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--primary-soft); }
+.split-me span { font-size: 12px; color: var(--text-2); }
+.split-me b { font-size: 17px; }
+.split-me small { font-size: 11px; color: var(--text-3); }
+@media (max-width: 640px) { .split-me { grid-template-columns: 1fr; } }
 .split-badge { margin-left: 8px; vertical-align: middle; font-size: 10.5px; padding: 1px 7px; gap: 3px;
   background: var(--primary-soft); color: var(--primary); }
 .rank { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font: 700 12px var(--display); background: var(--surface-3); color: var(--text-2); flex: none; }

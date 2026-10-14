@@ -234,7 +234,7 @@ export type SplitGroup = {
     id: number; from: number; to: number; amount: number; date: string;
     status: 'PENDING' | 'APPROVED' | 'REJECTED'; canDecide: boolean; mine: boolean;
   }[];
-  balances: { memberId: number; net: number }[];
+  balances: { memberId: number; net: number; paid: number; share: number }[];
   debts: { from: number; to: number; amount: number }[];
 };
 

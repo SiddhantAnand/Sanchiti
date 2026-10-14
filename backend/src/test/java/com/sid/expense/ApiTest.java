@@ -475,6 +475,9 @@ class ApiTest {
             .content(expense.formatted(me, me, rahulM, priyaM, txId)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.balances[?(@.memberId == " + me + ")].net").value(contains(600.0)))
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + me + ")].paid").value(contains(900.0)))
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + me + ")].share").value(contains(300.0)))
+        .andExpect(jsonPath("$.balances[?(@.memberId == " + rahulM + ")].paid").value(contains(0.0)))
         .andExpect(jsonPath("$.balances[?(@.memberId == " + rahulM + ")].net").value(contains(-300.0)))
         .andExpect(jsonPath("$.expenses[0].transactionId").value(txId));
     mvc.perform(authed(post("/api/split/groups/" + group + "/expenses")).contentType(MediaType.APPLICATION_JSON)

@@ -58,7 +58,8 @@ public class SplitService {
   public record SettlementView(
       long id, long from, long to, double amount, LocalDate date, String status, boolean canDecide, boolean mine) {}
 
-  public record Balance(long memberId, double net) {}
+  /** {@code paid}: expenses they paid for; {@code share}: their part of all expenses; settlements count only in net. */
+  public record Balance(long memberId, double net, double paid, double share) {}
 
   public record Debt(long from, long to, double amount) {}
 
@@ -114,12 +115,17 @@ public class SplitService {
     List<Member> members = repo.members(groupId);
     Long me = members.stream().filter(m -> Objects.equals(m.userId(), userId)).map(Member::id).findFirst().orElse(null);
     Map<Long, List<ShareView>> sharesByExpense = new HashMap<>();
+    Map<Long, Long> shareTotal = new HashMap<>();
     for (Share s : repo.shares(groupId)) {
       sharesByExpense.computeIfAbsent(s.expenseId(), k -> new ArrayList<>()).add(new ShareView(s.memberId(), major(s.amountMinor())));
+      shareTotal.merge(s.memberId(), s.amountMinor(), Long::sum);
     }
+    List<Expense> rawExpenses = repo.expenses(groupId);
+    Map<Long, Long> paidTotal = new HashMap<>();
+    rawExpenses.forEach(e -> paidTotal.merge(e.paidBy(), e.amountMinor(), Long::sum));
     Map<Long, Long> memberByUser = members.stream().filter(m -> m.userId() != null)
         .collect(Collectors.toMap(Member::userId, Member::id));
-    List<ExpenseView> expenses = repo.expenses(groupId).stream()
+    List<ExpenseView> expenses = rawExpenses.stream()
         .map(e -> {
           boolean mine = Objects.equals(e.createdBy(), userId);
           DeleteRequestView request = e.deleteRequested()
@@ -138,7 +144,8 @@ public class SplitService {
             Objects.equals(s.createdBy(), userId)))
         .toList();
     Map<Long, Long> net = net(groupId);
-    List<Balance> balances = members.stream().map(m -> new Balance(m.id(), major(net.getOrDefault(m.id(), 0L)))).toList();
+    List<Balance> balances = members.stream().map(m -> new Balance(m.id(), major(net.getOrDefault(m.id(), 0L)),
+        major(paidTotal.getOrDefault(m.id(), 0L)), major(shareTotal.getOrDefault(m.id(), 0L)))).toList();
     return new GroupDetail(g.id(), g.name(), g.ownerName(), g.ownerId() == userId, me,
         members.stream().map(m -> new MemberView(m.id(), m.name(), m.login(), Objects.equals(m.userId(), userId))).toList(),
         expenses, settlements, balances, debts(net));

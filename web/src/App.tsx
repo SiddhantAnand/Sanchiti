@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CircleHelp, Inbox, Landmark, LayoutDashboard, LoaderCircle, LogOut, ReceiptText, Settings as SettingsIcon, Sparkles, Users } from 'lucide-react';
+import { CircleHelp, Ellipsis, Inbox, Landmark, LayoutDashboard, LoaderCircle, LogOut, ReceiptText, Settings as SettingsIcon, Sparkles, Users } from 'lucide-react';
 import { api, setUnauthorizedHandler, type Direction, type Me, type ReviewItem, type Transaction } from './api';
 import {
   MONTHS, PERIODS, greeting, initials, isPeriodKey, period as makePeriod, periodParts, rangeLabel, type PeriodKey,
@@ -18,6 +18,8 @@ import { Transactions } from './pages/Transactions';
 
 type Route = 'overview' | 'transactions' | 'banks' | 'split' | 'review' | 'insights' | 'settings' | 'help';
 const ROUTES: Route[] = ['overview', 'transactions', 'banks', 'split', 'review', 'insights', 'settings', 'help'];
+/** Shown in the phone's bottom bar; the rest live under More. */
+const TABS: Route[] = ['overview', 'transactions', 'split', 'review'];
 
 function parseHash(): { route: Route; category: string; bank: string; kind: string; direction: Direction } {
   const [path, query] = window.location.hash.replace(/^#\/?/, '').split('?');
@@ -64,6 +66,7 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
   const [drawer, setDrawer] = useState<DrawerMode | null>(null);
   const [gemini, setGemini] = useState(false);
   const [splitTx, setSplitTx] = useState<Transaction | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const period = makePeriod(periodKey);
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -99,7 +102,7 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
     api.span().then((s) => s.first && setFirstYear(Number(s.first.slice(0, 4)))).catch(() => {});
   }, [refreshKey]);
 
-  const go = (r: string) => { window.location.hash = `/${r}`; };
+  const go = (r: string) => { setMoreOpen(false); window.location.hash = `/${r}`; };
 
   async function signOut() {
     await api.logout().catch(() => {});
@@ -138,12 +141,14 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
           <div><div className="brand-name">Sanchiti</div><div className="brand-sub">Personal finance</div></div>
         </div>
         <div className="nav-label">Menu</div>
-        {nav.map(({ id, label, icon: Icon, badge }) => (
-          <button key={id} className={`nav-item ${route === id ? 'active' : ''}`} onClick={() => go(id)}>
-            <Icon size={18} /> {label}
-            {!!badge && <span className="badge badge-amber">{badge}</span>}
-          </button>
-        ))}
+        <nav className="nav">
+          {nav.map(({ id, label, icon: Icon, badge }) => (
+            <button key={id} className={`nav-item ${route === id ? 'active' : ''}`} onClick={() => go(id)}>
+              <Icon size={18} /> {label}
+              {!!badge && <span className="badge badge-amber">{badge}</span>}
+            </button>
+          ))}
+        </nav>
 
         <div className="sidebar-foot">
           <div className="ai-status">
@@ -163,6 +168,40 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
           </div>
         </div>
       </aside>
+
+      <nav className="tabbar" aria-label="Menu">
+        {nav.filter((n) => TABS.includes(n.id)).map(({ id, label, icon: Icon, badge }) => (
+          <button key={id} className={route === id ? 'on' : ''} onClick={() => go(id)}>
+            <span className="tab-icon"><Icon size={21} />{!!badge && <i className="tab-badge">{badge}</i>}</span>
+            {label}
+          </button>
+        ))}
+        <button className={moreOpen || !TABS.includes(route) ? 'on' : ''} onClick={() => setMoreOpen((o) => !o)} aria-expanded={moreOpen}>
+          <span className="tab-icon"><Ellipsis size={21} /></span>
+          More
+        </button>
+      </nav>
+      {moreOpen && (
+        <>
+          <div className="overlay sheet-overlay" onClick={() => setMoreOpen(false)} />
+          <div className="sheet" role="dialog" aria-label="More">
+            <div className="sheet-grip" />
+            <div className="user-card">
+              <span className="avatar">{initials(me.name)}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="user-name">{me.name}</div>
+                <div className="user-role">@{me.login}{me.admin ? ' · admin' : ''} · {ai ? 'Gemini connected' : 'Gemini off'}</div>
+              </div>
+            </div>
+            {nav.filter((n) => !TABS.includes(n.id)).map(({ id, label, icon: Icon }) => (
+              <button key={id} className={`nav-item ${route === id ? 'active' : ''}`} onClick={() => go(id)}>
+                <Icon size={18} /> {label}
+              </button>
+            ))}
+            <button className="nav-item" onClick={signOut}><LogOut size={18} /> Sign out</button>
+          </div>
+        </>
+      )}
 
       <main className="main">
         <header className="topbar">

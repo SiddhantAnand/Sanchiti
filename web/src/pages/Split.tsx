@@ -220,7 +220,7 @@ function GroupView(props: {
             return (
               <div className="split-member" key={m.id}>
                 <span className="avatar" style={{ width: 30, height: 30, fontSize: 12 }}>{m.name.slice(0, 1).toUpperCase()}</span>
-                <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="split-member-main">
                   <div className="title">{m.isMe ? `${m.name} (you)` : m.name}</div>
                   <div className="sub">
                     {m.login ? <><Link2 size={11} /> @{m.login}</> : 'name only'}

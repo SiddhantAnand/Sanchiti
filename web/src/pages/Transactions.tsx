@@ -192,7 +192,7 @@ export function Transactions(props: {
               return (
                 <div className="tx-row" key={t.id} onClick={() => props.onEdit(t)}>
                   <CategoryIcon category={t.category} size={38} />
-                  <div style={{ minWidth: 0 }}>
+                  <div className="col-main" style={{ minWidth: 0 }}>
                     <div className="payee">
                       {payee}
                       {inSplit.has(t.id) && <span className="badge split-badge" title="Used in a split"><Users size={11} /> Split</span>}

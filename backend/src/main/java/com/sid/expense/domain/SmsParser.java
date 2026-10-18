@@ -56,7 +56,13 @@ public final class SmsParser {
       Map.entry(Pattern.compile("\\binterest\\b|\\bint\\.? (?:paid|cr)\\b", I), Category.INTEREST),
       Map.entry(Pattern.compile("\\bsal(?:ary)?\\b|\\bpayroll\\b", I), Category.SALARY));
 
-  private static final Pattern AMOUNT = Pattern.compile("(?:\\bRs\\.?|\\bINR|₹)\\s*([\\d,]+(?:\\.\\d{1,2})?)", I);
+  private static final Pattern AMOUNT = Pattern.compile(
+      "(?:\\b(Rs\\.?|INR|USD|US\\$|EUR|GBP|AED|SGD|JPY|AUD|CAD|CHF|HKD|THB|MYR|SAR|QAR|NZD|LKR|NPR|CNY)|(₹|\\$|€|£))"
+          + "\\s*(\\d[\\d,]*(?:\\.\\d{1,2})?|\\.\\d{1,2})", I);
+  /** "Avl Limit: INR 7,31,709.19" or "Available Balance is Rs. 2,000": that figure is not the payment. */
+  private static final Pattern BALANCE_BEFORE = Pattern.compile(
+      "(?:\\bavl|\\bavail\\w*|\\bbal\\w*|\\blimit)\\W*(?:is\\W*)?$", I);
+  private static final Map<String, String> SYMBOLS = Map.of("₹", "INR", "$", "USD", "€", "EUR", "£", "GBP");
 
   private static final Pattern ISO_DATE = Pattern.compile("\\b(20\\d{2})-(\\d{2})-(\\d{2})");
   private static final Pattern DAY_MON_YEAR =
@@ -125,6 +131,13 @@ public final class SmsParser {
 
   private SmsParser() {}
 
+  private static String currency(String token) {
+    String t = token.toUpperCase(java.util.Locale.ROOT);
+    if (t.startsWith("RS")) return "INR";
+    if (t.equals("US$")) return "USD";
+    return SYMBOLS.getOrDefault(t, t);
+  }
+
   /** {@code received} (the date the phone got the SMS) is used when the text has no usable date. */
   public static Result parse(String body, String sender, LocalDate received) {
     String text = body == null ? "" : body.replaceAll("\\s+", " ").trim();
@@ -143,9 +156,19 @@ public final class SmsParser {
     }
 
     Matcher amount = AMOUNT.matcher(text);
+    boolean found = false;
+    while (amount.find()) {
+      if (!BALANCE_BEFORE.matcher(text.substring(Math.max(0, amount.start() - 30), amount.start())).find()) {
+        found = true;
+        break;
+      }
+    }
     // "received" also appears in non-bank texts; without an amount there is nothing to record.
-    if (!amount.find()) return credit ? new Skip("Credit without an amount") : new Unreadable("No amount found");
-    String value = amount.group(1).replace(",", "");
+    if (!found) return credit ? new Skip("Credit without an amount") : new Unreadable("No amount found");
+    String value = amount.group(3).replace(",", "");
+    // Merchants like OpenAI charge 0.00 to check a card; nothing was spent.
+    if (new java.math.BigDecimal(value).signum() == 0) return new Skip("Zero amount (card check)");
+    String currency = currency(amount.group(1) != null ? amount.group(1) : amount.group(2));
 
     LocalDate date = dateIn(text, received).orElse(received);
     if (date == null) return new Unreadable("No date found");
@@ -171,6 +194,7 @@ public final class SmsParser {
     Map<String, Object> fields = new LinkedHashMap<>();
     fields.put("date", date.toString());
     fields.put("amount", value);
+    if (!"INR".equals(currency)) fields.put("currency", currency);
     fields.put("reason", payee);
     fields.put("bankName", bank(sender, text));
     fields.put("paymentMethod", method(text, cardLast4, upiRef));

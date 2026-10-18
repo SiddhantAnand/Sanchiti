@@ -6,6 +6,7 @@ import com.sid.expense.domain.Texts;
 import com.sid.expense.domain.Transaction;
 import com.sid.expense.domain.TransactionInput;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -77,6 +78,9 @@ public final class Summaries {
 
   public record CurrencyTotal(String currency, double total, int count) {}
 
+  /** Spending per month over whole months {@code from}..{@code to}; {@code months} is 0 when there are none yet. */
+  public record MonthlyAverage(double perMonth, int months, YearMonth from, YearMonth to) {}
+
   public record Comparison(
       double previousTotal, double totalChange, Double totalChangePct, List<CategoryChange> categoryChanges) {}
 
@@ -89,6 +93,11 @@ public final class Summaries {
   private Summaries() {}
 
   public static Summary summarize(List<Transaction> all, LocalDate from, LocalDate to) {
+    return summarize(all, from, to, to);
+  }
+
+  /** {@code today} caps the days the per-day average is spread over, so a month in progress isn't diluted. */
+  public static Summary summarize(List<Transaction> all, LocalDate from, LocalDate to, LocalDate today) {
     List<Transaction> txs = all.stream().filter(t -> !t.isCredit()).toList();
     List<Transaction> inr = txs.stream().filter(t -> TransactionInput.BASE_CURRENCY.equals(t.currency())).toList();
     List<Transaction> creditsInr = all.stream()
@@ -104,6 +113,8 @@ public final class Summaries {
         .toList();
     long totalMinor = base.stream().mapToLong(Transaction::amountMinor).sum();
     int days = (int) Math.max(1, ChronoUnit.DAYS.between(from, to) + 1);
+    LocalDate lastDay = to.isAfter(today) ? today : to;
+    int elapsedDays = (int) Math.max(1, ChronoUnit.DAYS.between(from, lastDay) + 1);
 
     Map<String, Long> perDay = new HashMap<>();
     for (Group g : group(base, t -> t.date().toString())) perDay.put(g.label(), g.totalMinor());
@@ -123,7 +134,7 @@ public final class Summaries {
         TransactionInput.BASE_CURRENCY,
         major(totalMinor),
         base.size(),
-        Math.round((double) totalMinor / days) / 100.0,
+        Math.round((double) totalMinor / elapsedDays) / 100.0,
         major(investedMinor),
         investments.size(),
         major(own.stream().mapToLong(Transaction::amountMinor).sum()),
@@ -163,6 +174,17 @@ public final class Summaries {
                 Transaction::currency).stream()
             .map(g -> new CurrencyTotal(g.label(), major(g.totalMinor()), g.count()))
             .toList());
+  }
+
+  public static MonthlyAverage monthlyAverage(List<Transaction> all, YearMonth from, YearMonth to) {
+    if (from.isAfter(to)) return new MonthlyAverage(0, 0, from, to);
+    long totalMinor = all.stream()
+        .filter(t -> !t.isCredit() && TransactionInput.BASE_CURRENCY.equals(t.currency()))
+        .filter(t -> !t.isInvestment() && !t.isOwnTransfer())
+        .mapToLong(Transaction::amountMinor)
+        .sum();
+    int months = (int) from.until(to, ChronoUnit.MONTHS) + 1;
+    return new MonthlyAverage(Math.round((double) totalMinor / months) / 100.0, months, from, to);
   }
 
   public static Comparison compare(Summary current, Summary previous) {

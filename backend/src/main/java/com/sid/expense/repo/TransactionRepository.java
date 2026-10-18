@@ -25,9 +25,12 @@ public class TransactionRepository {
 
   private static final String COLUMNS = """
       id, date, amount_minor, currency, direction, reason, merchant, payment_method, upi_ref, card_last4, bank,
-      category, category_source, note, created_at""";
+      category, category_source, note, created_at, fx_amount_minor, fx_currency, fx_rate, fx_date""";
 
-  private static final RowMapper<Transaction> MAPPER = (rs, i) -> new Transaction(
+  private static final RowMapper<Transaction> MAPPER = (rs, i) -> {
+    Long fxMinor = rs.getObject("fx_amount_minor", Long.class);
+    var fxRate = rs.getBigDecimal("fx_rate");
+    return new Transaction(
       rs.getObject("id", UUID.class),
       rs.getObject("date", LocalDate.class),
       rs.getLong("amount_minor") / 100.0,
@@ -42,18 +45,30 @@ public class TransactionRepository {
       rs.getString("category"),
       rs.getString("category_source"),
       rs.getString("note"),
-      rs.getObject("created_at", OffsetDateTime.class));
+      rs.getObject("created_at", OffsetDateTime.class),
+      fxMinor == null ? null : fxMinor / 100.0,
+      rs.getString("fx_currency"),
+      fxRate == null ? null : fxRate.doubleValue(),
+      rs.getObject("fx_date", LocalDate.class));
+  };
+
+  /** What was charged in a foreign currency, before conversion to INR; all null for INR payments. */
+  public record Fx(Long amountMinor, String currency, java.math.BigDecimal rate, LocalDate date) {
+    public static final Fx NONE = new Fx(null, null, null, null);
+  }
 
   public record NewTransaction(
       long userId, UUID id, LocalDate date, long amountMinor, String currency, String direction, String reason,
       String reasonKey, String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
-      String category, String categorySource, String dedupeKey, String note) {}
+      String category, String categorySource, String dedupeKey, String note, Long fxAmountMinor, String fxCurrency,
+      java.math.BigDecimal fxRate, LocalDate fxDate) {}
 
   /** Replaces every user-editable column; the dedupe key keeps identifying the originally received record. */
   public record EditedTransaction(
       long userId, UUID id, LocalDate date, long amountMinor, String currency, String direction, String reason,
       String reasonKey, String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
-      String category, String categorySource, String note) {}
+      String category, String categorySource, String note, Long fxAmountMinor, String fxCurrency,
+      java.math.BigDecimal fxRate, LocalDate fxDate) {}
 
   public record KnownCategory(String category, String source) {}
 
@@ -170,9 +185,11 @@ public class TransactionRepository {
     jdbc.sql("""
         INSERT INTO transactions
           (user_id, id, date, amount_minor, currency, direction, reason, reason_key, merchant, payment_method, upi_ref,
-           card_last4, bank, category, category_source, dedupe_key, note)
+           card_last4, bank, category, category_source, dedupe_key, note, fx_amount_minor, fx_currency, fx_rate,
+           fx_date)
         VALUES (:userId, :id, :date, :amountMinor, :currency, :direction, :reason, :reasonKey, :merchant,
-           :paymentMethod, :upiRef, :cardLast4, :bank, :category, :categorySource, :dedupeKey, :note)""")
+           :paymentMethod, :upiRef, :cardLast4, :bank, :category, :categorySource, :dedupeKey, :note,
+           CAST(:fxAmountMinor AS BIGINT), CAST(:fxCurrency AS TEXT), CAST(:fxRate AS NUMERIC), CAST(:fxDate AS DATE))""")
         .paramSource(t)
         .update();
   }
@@ -182,7 +199,9 @@ public class TransactionRepository {
         UPDATE transactions SET date = :date, amount_minor = :amountMinor, currency = :currency,
           direction = :direction, reason = :reason, reason_key = :reasonKey, merchant = :merchant,
           payment_method = :paymentMethod, upi_ref = :upiRef, card_last4 = :cardLast4, bank = :bank,
-          category = :category, category_source = :categorySource, note = :note
+          category = :category, category_source = :categorySource, note = :note,
+          fx_amount_minor = CAST(:fxAmountMinor AS BIGINT), fx_currency = CAST(:fxCurrency AS TEXT),
+          fx_rate = CAST(:fxRate AS NUMERIC), fx_date = CAST(:fxDate AS DATE)
         WHERE id = :id AND user_id = :userId""")
         .paramSource(t)
         .update();

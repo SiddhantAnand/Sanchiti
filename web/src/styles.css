@@ -416,6 +416,10 @@ a { color: var(--primary); text-decoration: none; }
 .split-matches button:hover { background: var(--row-hover); }
 .split-shares { display: flex; flex-direction: column; gap: 6px; }
 .split-share { display: flex; align-items: center; gap: 10px; padding: 6px 4px; font-size: 13.5px; }
+.kpi-avgs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 2px; }
+.kpi-avgs > div { display: flex; flex-direction: column; gap: 1px; padding: 7px 10px; border-radius: 10px; background: var(--surface-2); }
+.kpi-avgs span { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-avgs b { font-size: 15px; }
 .split-me { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 4px 0 14px; }
 .split-me > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; background: var(--primary-soft); }
 .split-me span { font-size: 12px; color: var(--text-2); }
@@ -456,6 +460,7 @@ a { color: var(--primary); text-decoration: none; }
 .tx-row .note { font-size: 12px; color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tx-row .amount { text-align: right; font: 700 15px var(--display); font-variant-numeric: tabular-nums; }
 .tx-row .amount.credit { color: var(--teal); }
+.tx-row .fx-note { font: 500 11.5px var(--font); color: var(--text-3); }
 .tx-row .actions { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity 0.12s; }
 .tx-row:hover .actions, .tx-row:focus-within .actions { opacity: 1; }
 @media (hover: none) { .tx-row .actions { opacity: 1; } }

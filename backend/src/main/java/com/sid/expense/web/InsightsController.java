@@ -15,6 +15,7 @@ import com.sid.expense.service.Categorizer;
 import com.sid.expense.service.Summaries;
 import com.sid.expense.service.Summaries.Summary;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -107,7 +108,19 @@ public class InsightsController {
     LocalDate start = from == null ? end.withDayOfMonth(1) : TransactionController.date(from, "from");
     if (start.isAfter(end)) throw new ApiException(HttpStatus.BAD_REQUEST, "`from` must be on or before `to`");
     if (start.plusYears(5).isBefore(end)) throw new ApiException(HttpStatus.BAD_REQUEST, "Range is limited to 5 years");
-    return Summaries.summarize(transactions.inRange(user.id(), start, end), start, end);
+    return Summaries.summarize(transactions.inRange(user.id(), start, end), start, end, LocalDate.now(props.zone()));
+  }
+
+  /** Average spending per month over the last 12 whole months (fewer if the data starts later). */
+  @GetMapping("/api/averages")
+  public Summaries.MonthlyAverage averages(@RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user) {
+    YearMonth to = YearMonth.now(props.zone()).minusMonths(1);
+    YearMonth from = to.minusMonths(11);
+    LocalDate first = transactions.span(user.id()).first();
+    if (first == null) return new Summaries.MonthlyAverage(0, 0, from, to);
+    if (YearMonth.from(first).isAfter(from)) from = YearMonth.from(first);
+    return Summaries.monthlyAverage(
+        transactions.inRange(user.id(), from.atDay(1), to.atEndOfMonth()), from, to);
   }
 
   @PostMapping("/api/categorize")

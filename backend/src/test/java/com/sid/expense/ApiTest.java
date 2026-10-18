@@ -17,10 +17,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.sid.expense.ai.AiClient;
+import com.sid.expense.service.FxRates;
 import com.sid.expense.web.AccountService;
 import jakarta.servlet.http.Cookie;
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -114,6 +118,22 @@ class ApiTest {
     @Primary
     StubAi stubAi() {
       return new StubAi();
+    }
+
+    /** USD 85.50 and EUR 100.00 on any day; nothing else has a rate. */
+    @Bean
+    @Primary
+    FxRates stubFx() {
+      return new FxRates("http://unused") {
+        @Override
+        protected Optional<Rate> fetch(String currency, LocalDate date) {
+          return switch (currency) {
+            case "USD" -> Optional.of(new Rate(new BigDecimal("85.50"), date));
+            case "EUR" -> Optional.of(new Rate(new BigDecimal("100"), date.minusDays(1)));
+            default -> Optional.empty();
+          };
+        }
+      };
     }
   }
 
@@ -221,24 +241,42 @@ class ApiTest {
   }
 
   @Test
-  void summarisesInrAndKeepsOtherCurrenciesSeparate() throws Exception {
+  void convertsForeignSpendsToInrAtTheDaysRateAndKeepsUnratedOnesSeparate() throws Exception {
     postTx("""
         [{"date": "2026-10-01", "amount": 1000, "reason": "Swiggy dinner", "bankName": "HDFC"},
          {"date": "2026-10-02", "amount": 250, "reason": "Amazon cable", "bankName": "SBI"},
-         {"date": "2026-10-02", "amount": 20, "reason": "Duty free", "currency": "USD"}]""");
+         {"date": "2026-10-02", "amount": 20, "reason": "Duty free", "currency": "USD"},
+         {"date": "2026-10-03", "amount": 50, "reason": "Dubai taxi", "currency": "AED"}]""");
     mvc.perform(authed(get("/api/summary?from=2026-10-01&to=2026-10-07")))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.total").value(1250.0))
-        .andExpect(jsonPath("$.count").value(2))
-        .andExpect(jsonPath("$.averagePerDay").value(178.57))
-        .andExpect(jsonPath("$.byCategory[0].category").value("Food & Dining"))
-        .andExpect(jsonPath("$.byCategory[0].total").value(1000.0))
-        .andExpect(jsonPath("$.byCategory[0].sharePct").value(80.0))
+        .andExpect(jsonPath("$.total").value(2960.0))
+        .andExpect(jsonPath("$.count").value(3))
+        .andExpect(jsonPath("$.averagePerDay").value(422.86))
+        .andExpect(jsonPath("$.byCategory[0].category").value("Shopping"))
+        .andExpect(jsonPath("$.byCategory[0].total").value(1960.0))
         .andExpect(jsonPath("$.byBank[0].bank").value("HDFC Bank"))
         .andExpect(jsonPath("$.byBank[1].bank").value("State Bank of India"))
-        .andExpect(jsonPath("$.otherCurrencies[0].currency").value("USD"))
-        .andExpect(jsonPath("$.otherCurrencies[0].total").value(20.0))
+        .andExpect(jsonPath("$.otherCurrencies[0].currency").value("AED"))
+        .andExpect(jsonPath("$.otherCurrencies[0].total").value(50.0))
         .andExpect(jsonPath("$.daily", hasSize(7)));
+
+    String body = mvc.perform(authed(get("/api/transactions?from=2026-10-01&to=2026-10-07&q=Duty")))
+        .andExpect(jsonPath("$.items[0].amount").value(1710.0))
+        .andExpect(jsonPath("$.items[0].currency").value("INR"))
+        .andExpect(jsonPath("$.items[0].fxAmount").value(20.0))
+        .andExpect(jsonPath("$.items[0].fxCurrency").value("USD"))
+        .andExpect(jsonPath("$.items[0].fxRate").value(85.5))
+        .andReturn().getResponse().getContentAsString();
+    String id = JSON.readTree(body).get("items").get(0).get("id").asString();
+
+    // A note edit keeps the original charge; changing the INR amount by hand drops it.
+    patchTx(id, "{\"note\": \"airport\"}").andExpect(jsonPath("$.fxAmount").value(20.0));
+    patchTx(id, "{\"amount\": 1800}").andExpect(jsonPath("$.fxAmount").doesNotExist());
+    // Editing in EUR converts again at that day's rate.
+    patchTx(id, "{\"amount\": 105, \"currency\": \"EUR\"}")
+        .andExpect(jsonPath("$.amount").value(10500.0))
+        .andExpect(jsonPath("$.fxCurrency").value("EUR"))
+        .andExpect(jsonPath("$.fxDate").value("2026-10-01"));
   }
 
   @Test

@@ -9,8 +9,11 @@ import com.sid.expense.domain.TransactionInput;
 import com.sid.expense.repo.ReviewRepository;
 import com.sid.expense.repo.TransactionRepository;
 import com.sid.expense.repo.TransactionRepository.EditedTransaction;
+import com.sid.expense.repo.TransactionRepository.Fx;
 import com.sid.expense.repo.TransactionRepository.KnownCategory;
 import com.sid.expense.repo.TransactionRepository.NewTransaction;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -41,13 +44,28 @@ public class TransactionService {
   private final TransactionRepository repo;
   private final ReviewRepository reviews;
   private final Catalog catalog;
+  private final FxRates fx;
 
   private static final String CREDIT_KEY = "in:";
 
-  public TransactionService(TransactionRepository repo, ReviewRepository reviews, Catalog catalog) {
+  public TransactionService(TransactionRepository repo, ReviewRepository reviews, Catalog catalog, FxRates fx) {
     this.repo = repo;
     this.reviews = reviews;
     this.catalog = catalog;
+    this.fx = fx;
+  }
+
+  /** The input in INR plus what was originally charged; unchanged (and no Fx) if INR or no rate is available. */
+  private record Converted(TransactionInput input, Fx fx) {}
+
+  private Converted toInr(TransactionInput t) {
+    if (TransactionInput.BASE_CURRENCY.equals(t.currency())) return new Converted(t, Fx.NONE);
+    return fx.toInr(t.currency(), t.date())
+        .map(rate -> new Converted(
+            t.withMoney(BigDecimal.valueOf(t.amountMinor()).multiply(rate.perUnit()).setScale(0, RoundingMode.HALF_UP)
+                .longValueExact(), TransactionInput.BASE_CURRENCY),
+            new Fx(t.amountMinor(), t.currency(), rate.perUnit(), rate.date())))
+        .orElse(new Converted(t, Fx.NONE));
   }
 
   /** Validates one item for this user: their own banks and categories count as known. */
@@ -117,12 +135,14 @@ public class TransactionService {
 
       Optional<KnownCategory> category = category(userId, userName, d, t);
       UUID id = UUID.randomUUID();
+      Converted c = toInr(t);
+      TransactionInput s = c.input();
       repo.insert(new NewTransaction(
-          userId, id, t.date(), t.amountMinor(), t.currency(), t.direction().name(), t.reason(), reasonKey,
+          userId, id, s.date(), s.amountMinor(), s.currency(), s.direction().name(), s.reason(), reasonKey,
           d.merchant(), d.method(), upiRef, d.cardLast4(), d.bank(),
           category.map(KnownCategory::category).orElse(null), category.map(KnownCategory::source).orElse(null),
-          dedupeKey, t.note()));
-      pairOwnTransfer(userId, id, t, d.bank(), category.map(KnownCategory::category).orElse(null),
+          dedupeKey, s.note(), c.fx().amountMinor(), c.fx().currency(), c.fx().rate(), c.fx().date()));
+      pairOwnTransfer(userId, id, s, d.bank(), category.map(KnownCategory::category).orElse(null),
           category.map(KnownCategory::source).orElse(null));
       ids.add(id);
     }
@@ -176,9 +196,17 @@ public class TransactionService {
       category = known.map(KnownCategory::category).orElse(null);
       source = known.map(KnownCategory::source).orElse(null);
     }
+    // An INR edit that leaves the date and amount alone keeps the original foreign charge; any other change drops it.
+    Converted c = toInr(t);
+    Fx kept = c.fx() != Fx.NONE ? c.fx()
+        : old.fxAmount() != null && t.amountMinor() == old.amountMinor() && t.date().equals(old.date())
+            ? new Fx(old.fxAmountMinor(), old.fxCurrency(), BigDecimal.valueOf(old.fxRate()), old.fxDate())
+            : Fx.NONE;
+    TransactionInput s = c.input();
     repo.update(new EditedTransaction(
-        userId, old.id(), t.date(), t.amountMinor(), t.currency(), t.direction().name(), t.reason(), d.reasonKey(),
-        d.merchant(), d.method(), d.upiRef(), d.cardLast4(), d.bank(), category, source, t.note()));
+        userId, old.id(), s.date(), s.amountMinor(), s.currency(), s.direction().name(), s.reason(), d.reasonKey(),
+        d.merchant(), d.method(), d.upiRef(), d.cardLast4(), d.bank(), category, source, s.note(),
+        kept.amountMinor(), kept.currency(), kept.rate(), kept.date()));
   }
 
   /** Debits go back to Gemini; credits go back to their rule-based category. */
@@ -192,7 +220,8 @@ public class TransactionService {
     category(userId, userName, d, input).ifPresent(k -> repo.update(new EditedTransaction(
         userId, tx.id(), tx.date(), tx.amountMinor(), tx.currency(), tx.direction().name(), tx.reason(),
         d.reasonKey(), d.merchant(), d.method(), d.upiRef(), d.cardLast4(), d.bank(), k.category(), k.source(),
-        tx.note())));
+        tx.note(), tx.fxAmountMinor(), tx.fxCurrency(), tx.fxRate() == null ? null : BigDecimal.valueOf(tx.fxRate()),
+        tx.fxDate())));
   }
 
   /**

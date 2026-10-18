@@ -21,10 +21,19 @@ public record Transaction(
     String category,
     String categorySource,
     String note,
-    OffsetDateTime createdAt) {
+    OffsetDateTime createdAt,
+    /** Set when a foreign-currency spend was converted: what was charged, and the INR rate of {@code fxDate}. */
+    Double fxAmount,
+    String fxCurrency,
+    Double fxRate,
+    LocalDate fxDate) {
 
   public long amountMinor() {
     return Math.round(amount * 100);
+  }
+
+  public Long fxAmountMinor() {
+    return fxAmount == null ? null : Math.round(fxAmount * 100);
   }
 
   public boolean isCredit() {

@@ -142,7 +142,32 @@ class SmsParserTest {
         + "Avl Limit: INR 1,00,000.00. If not you, call 1800 2662/SMS BLOCK 7007 to 9215676766.", "VM-ICICIT");
     assertThat(f).containsEntry("date", "2026-10-09").containsEntry("amount", "900.00")
         .containsEntry("reason", "MADHU WINES").containsEntry("bankName", "ICICI Bank")
-        .containsEntry("cardLast4", "7007");
+        .containsEntry("cardLast4", "7007").doesNotContainKey("currency");
+  }
+
+  @Test
+  void readsForeignCurrencyAndNeverTheAvailableLimit() {
+    var f = debit("USD 5.90 spent using ICICI Bank Card XX8006 on 02-May-26 on OPENAI. Avl Limit: INR 7,31,709.19. "
+        + "If not you, call 1800 2662/SMS BLOCK 8006 to 9215676766.", "VM-ICICIT");
+    assertThat(f).containsEntry("amount", "5.90").containsEntry("currency", "USD")
+        .containsEntry("reason", "OPENAI").containsEntry("cardLast4", "8006");
+    assertThat(debit("EUR 450.00 spent using ICICI Bank Card XX8006 on 15-Aug-26 on CROUS. Avl Limit: INR 7,02,263.45.",
+        "ICICIT")).containsEntry("amount", "450.00").containsEntry("currency", "EUR");
+    assertThat(debit("Spent $12.99 on HDFC Bank Card 4321 At NETFLIX On 2026-10-08", "HDFCBK"))
+        .containsEntry("amount", "12.99").containsEntry("currency", "USD");
+  }
+
+  @Test
+  void skipsZeroAmountCardChecks() {
+    assertThat(SmsParser.parse("USD .00 spent using ICICI Bank Card XX8006 on 02-May-26 on OPENAI. "
+        + "Avl Limit: INR 7,32,269.22. If not you, call 1800 2662/SMS BLOCK 8006 to 9215676766.", "ICICIT", RECEIVED))
+        .isEqualTo(new SmsParser.Skip("Zero amount (card check)"));
+  }
+
+  @Test
+  void neverReadsOnlyABalanceAsTheAmount() {
+    assertThat(SmsParser.parse("Card XX8006 spent on 02-May-26 on OPENAI. Avl Limit: INR 7,31,709.19.", "ICICIT",
+        RECEIVED)).isEqualTo(new SmsParser.Unreadable("No amount found"));
   }
 
   @Test

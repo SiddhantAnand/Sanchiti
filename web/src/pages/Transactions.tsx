@@ -215,7 +215,10 @@ export function Transactions(props: {
                   </div>
                   <div className="cell-muted col-method">{methodLabel(t.paymentMethod, t.cardLast4) ?? '—'}</div>
                   <div className="cell-muted col-bank">{t.bank ?? '—'}</div>
-                  <div className={`amount ${credit ? 'credit' : ''}`}>{credit ? '+' : ''}{money(t.amount, t.currency)}</div>
+                  <div className={`amount ${credit ? 'credit' : ''}`}>
+                    {credit ? '+' : ''}{money(t.amount, t.currency)}
+                    {t.fxAmount != null && t.fxCurrency && <div className="fx-note">{money(t.fxAmount, t.fxCurrency)}</div>}
+                  </div>
                   <div className="actions" onClick={(e) => e.stopPropagation()}>
                     {!credit && (
                       <button className="icon-btn" aria-label="Split with a group" title="Split with a group" onClick={() => props.onSplit(t)}>

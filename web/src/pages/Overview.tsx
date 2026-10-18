@@ -45,6 +45,7 @@ export function Overview(props: {
   const [cur, setCur] = useState<Summary | null>(null);
   const [prev, setPrev] = useState<Summary | null>(null);
   const [latest, setLatest] = useState<Analysis | null>(null);
+  const [monthly, setMonthly] = useState<{ perMonth: number; months: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -54,6 +55,7 @@ export function Overview(props: {
       .then(([a, b]) => live && (setCur(a), setPrev(b), setError(null)))
       .catch((e) => live && setError(e.message));
     api.analyses().then((r) => live && setLatest(r.items[0] ?? null)).catch(() => {});
+    api.averages().then((a) => live && setMonthly(a)).catch(() => {});
     return () => { live = false; };
   }, [period.from, period.to, period.prevFrom, period.prevTo, props.refreshKey]);
 
@@ -87,8 +89,15 @@ export function Overview(props: {
             <Delta current={cur.total} previous={prev.total} />
           </div>
           <div className="kpi-value">{moneyWhole(cur.total)}</div>
+          <div className="kpi-avgs">
+            <div><span>Avg / day</span><b className="num">{moneyWhole(cur.averagePerDay)}</b></div>
+            <div title={monthly?.months ? `Average of the last ${monthly.months} whole month${monthly.months === 1 ? '' : 's'}` : undefined}>
+              <span>Avg / month{monthly?.months ? ` · last ${monthly.months} mo` : ''}</span>
+              <b className="num">{monthly?.months ? moneyWhole(monthly.perMonth) : '—'}</b>
+            </div>
+          </div>
           <div className="kpi-foot">
-            {moneyWhole(cur.averagePerDay)}/day · {cur.count} debit{cur.count === 1 ? '' : 's'}
+            {cur.count} debit{cur.count === 1 ? '' : 's'}
             {cur.uncategorizedCount > 0 && (
               <span className="badge badge-amber" title="Uncategorised"><CircleQuestionMark size={12} />{cur.uncategorizedCount}</span>
             )}

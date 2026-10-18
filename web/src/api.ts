@@ -16,6 +16,11 @@ export type Transaction = {
   categorySource: 'ai' | 'manual' | 'rule' | null;
   note: string | null;
   createdAt: string;
+  /** Set when a foreign-currency spend was converted to INR at the rate of fxDate. */
+  fxAmount: number | null;
+  fxCurrency: string | null;
+  fxRate: number | null;
+  fxDate: string | null;
 };
 
 export type Page = { total: number; items: Transaction[] };
@@ -164,6 +169,8 @@ export const api = {
   banks: () => request<{ banks: string[] }>('GET', '/api/banks'),
   addBank: (name: string) => request<{ banks: string[] }>('POST', '/api/banks', { name }),
   summary: (from: string, to: string) => request<Summary>('GET', `/api/summary${qs({ from, to })}`),
+  /** Average spend per month over the last 12 whole months (fewer if the data starts later). */
+  averages: () => request<{ perMonth: number; months: number; from: string; to: string }>('GET', '/api/averages'),
   span: () => request<{ first: string | null; last: string | null }>('GET', '/api/transactions/span'),
   transactions: (p: {
     from?: string; to?: string; category?: string; q?: string; bank?: string; kind?: string; direction?: Direction;

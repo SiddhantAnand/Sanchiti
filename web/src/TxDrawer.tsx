@@ -3,7 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, CircleAlert, CreditCard, Landmark, LoaderC
 import { api, ApiError, reviewParts, type Direction, type ReviewItem, type Transaction, type TransactionFields } from './api';
 import { Drawer, usePrompt, useToast } from './ui';
 import { CategoryIcon, NEW_CATEGORY } from './categories';
-import { longDate, money, toIso } from './format';
+import { longDate, money, shortDate, toIso } from './format';
 
 const NEW_BANK = '__new_bank__';
 
@@ -288,6 +288,11 @@ export function TxDrawer(props: {
           {mode.tx.categorySource === 'manual' && <span className="badge badge-violet">Category set by you</span>}
           {mode.tx.categorySource === 'rule' && <span className="badge">Category set automatically</span>}
           {mode.tx.upiRef && <span className="badge">UPI ref {mode.tx.upiRef}</span>}
+          {mode.tx.fxAmount != null && mode.tx.fxCurrency && (
+            <span className="badge badge-teal">
+              Charged {money(mode.tx.fxAmount, mode.tx.fxCurrency)} · ₹{mode.tx.fxRate} per {mode.tx.fxCurrency} on {shortDate(mode.tx.fxDate ?? mode.tx.date)}
+            </span>
+          )}
           <span className="faint">Added {new Date(mode.tx.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
         </div>
       )}

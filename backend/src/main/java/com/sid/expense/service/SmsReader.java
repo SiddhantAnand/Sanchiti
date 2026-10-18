@@ -176,7 +176,7 @@ public class SmsReader {
     fields.put("bankName", m.get("bank") instanceof String b ? catalog.banks(userId).resolve(b).orElse(null) : null);
     fields.put("paymentMethod", m.get("paymentMethod") instanceof String p ? p : null);
     fields.put("upiRef", inText(m.get("upiRef"), text));
-    fields.put("cardLast4", inText(m.get("cardLast4"), text));
+    fields.put("cardLast4", cardIn(m.get("cardLast4"), text));
     fields.put("direction", "credit".equals(m.get("direction")) ? "credit" : "debit");
     return fields;
   }
@@ -191,6 +191,14 @@ public class SmsReader {
       }
     }
     return false;
+  }
+
+  /** Only digits the text ties to a card: "Account XX0536" is an account, not a card. */
+  private static String cardIn(Object value, String text) {
+    String digits = inText(value, text);
+    if (digits == null || !digits.matches("\\d{4}")) return null;
+    return Pattern.compile("\\bcard\\b.{0,30}?" + digits + "\\b", Pattern.CASE_INSENSITIVE).matcher(text).find()
+        ? digits : null;
   }
 
   private static String inText(Object value, String text) {

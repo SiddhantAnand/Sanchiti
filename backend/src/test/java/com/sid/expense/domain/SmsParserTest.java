@@ -205,8 +205,7 @@ class SmsParserTest {
         + "Corporation Lt UMRN: HDFC7000000000000001", "");
     assertThat(f).containsEntry("date", "2026-10-10").containsEntry("amount", "2500.00")
         .containsEntry("reason", "Indian Clearing Corporation Lt").containsEntry("bankName", "HDFC")
-        .containsEntry("paymentMethod", "AUTOPAY");
-    assertThat(f.get("upiRef")).isNull();
+        .containsEntry("paymentMethod", "AUTOPAY").containsEntry("upiRef", "HDFC7000000000000001");
   }
 
   @Test

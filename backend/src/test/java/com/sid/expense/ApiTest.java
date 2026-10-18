@@ -98,7 +98,7 @@ class ApiTest {
       r.put("isTransaction", !sms.contains("applying"));
       if (sms.contains("Bill Paid")) {
         r.putAll(Map.of("direction", "debit", "amount", 2500, "date", "2026-10-12", "payee", "EdelweisMF",
-            "bank", "HDFC Bank", "paymentMethod", "NETBANKING"));
+            "bank", "HDFC Bank", "paymentMethod", "NETBANKING", "cardLast4", "0536"));
       } else if (sms.contains("MYSTERY")) {
         r.putAll(Map.of("direction", "debit", "amount", 9999, "payee", "Mystery shop"));
       }
@@ -238,6 +238,16 @@ class ApiTest {
         .andExpect(jsonPath("$.inserted", empty()))
         .andExpect(jsonPath("$.duplicateIndexes[0]").value(0));
     postTx(tx, "?allowDuplicates=true").andExpect(status().isCreated());
+  }
+
+  @Test
+  void keepsTwoSameDaySipsApartByMandateButDropsARepeatedSms() throws Exception {
+    String sip = "{\"received\": \"2026-10-01\", \"sender\": \"HDFCBK\", \"body\": \"PAYMENT ALERT! INR 2500.00 deducted "
+        + "from HDFC Bank A/C No 1122 towards Indian Clearing Corporation Lt UMRN: HDFC700000000000000%s\"}";
+    postSms("[" + sip.formatted(1) + "," + sip.formatted(2) + "," + sip.formatted(1) + "]", "test-phone-key")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted", hasSize(2)))
+        .andExpect(jsonPath("$.duplicateIndexes", contains(2)));
   }
 
   @Test
@@ -427,6 +437,8 @@ class ApiTest {
         .andExpect(jsonPath("$.inserted[*].reason", containsInAnyOrder("EdelweisMF", "CHAI POINT")))
         .andExpect(jsonPath("$.inserted[?(@.reason == 'EdelweisMF')].note").value(contains("Read from SMS by Gemini")))
         .andExpect(jsonPath("$.inserted[?(@.reason == 'EdelweisMF')].bank").value(contains("HDFC Bank")))
+        // Gemini took "Account XX0536" for a card; that would split one bill into two payments.
+        .andExpect(jsonPath("$.inserted[?(@.reason == 'EdelweisMF')].cardLast4").value(contains((Object) null)))
         .andExpect(jsonPath("$.skipped[*].why", contains("Gemini: not a bank transaction")))
         .andExpect(jsonPath("$.review[0].index").value(2))
         .andExpect(jsonPath("$.review[0].issue").value(containsString("Gemini couldn't read it either")));

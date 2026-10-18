@@ -122,8 +122,8 @@ function ShortcutSteps({ url, hasKey }: { url: string; hasKey: boolean }) {
         <Step n={5} title="Keep only debit and credit messages">
           Add <b>If</b> → <b>Updated Text</b> · <b>contains</b> · <Code>debit</Code>. Tap the condition to add more and set it
           to <b>Any</b>: <Code>spent</Code>, <Code>sent</Code>, <Code>paid</Code>, <Code>deducted</Code>, <Code>credited</Code>,{' '}
-          <Code>received</Code>, <Code>deposited</Code>, <Code>refund</Code> — all lowercase, no spaces. The last four bring in
-          money that arrives; Sanchiti skips anything that is not a real bank debit or credit (OTPs, offers, card bill receipts).
+          <Code>received</Code>, <Code>deposited</Code>, <Code>refund</Code>, <Code>withdrawn</Code> — all lowercase, no spaces.
+          <Code>withdrawn</Code> brings in ATM cash; the four before it bring in money that arrives. Sanchiti skips anything that is not a real bank debit or credit (OTPs, offers, card bill receipts).
         </Step>
         <Step n={6} title="Build one row per SMS (inside the If)">
           Add <b>Dictionary</b> with three <b>Text</b> items:

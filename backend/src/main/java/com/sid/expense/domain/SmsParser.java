@@ -74,6 +74,8 @@ public final class SmsParser {
       "\\b(?:ref(?:erence)?|rrn|utr|upi ref)(?:\\s*(?:no|number|id))?\\.?\\s*[:#-]?\\s*(\\d{12})\\b", I);
   private static final Pattern ANY_REF = Pattern.compile("(?<!\\d)(\\d{12})(?!\\d)");
   private static final Pattern REF_CONTEXT = Pattern.compile("\\b(?:upi|imps|neft|nach|ecmiss|vpa)\\b", I);
+  // Each mandate has its own UMRN, so two SIPs of the same amount on the same day stay apart.
+  private static final Pattern UMRN = Pattern.compile("\\bUMRN\\b\\s*(?:no\\.?)?\\s*[:#-]?\\s*([A-Z0-9]{8,35})\\b", I);
 
   private static final Pattern CARD = Pattern.compile(
       "\\bcard\\b(?:\\s*(?:no\\.?|number|ending(?:\\s*(?:with|in))?))?\\s*[:#]?\\s*[x*•.\\s]*(\\d{4})\\b", I);
@@ -313,6 +315,8 @@ public final class SmsParser {
   private static String ref(String text) {
     Matcher labelled = LABELLED_REF.matcher(text);
     if (labelled.find()) return labelled.group(1);
+    Matcher umrn = UMRN.matcher(text);
+    if (umrn.find()) return umrn.group(1);
     if (!REF_CONTEXT.matcher(text).find()) return null;
     Matcher any = ANY_REF.matcher(text);
     return any.find() ? any.group(1) : null;

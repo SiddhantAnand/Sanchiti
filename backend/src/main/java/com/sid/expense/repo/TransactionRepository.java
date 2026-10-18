@@ -327,14 +327,14 @@ public class TransactionRepository {
         .optional();
   }
 
-  /** Also relabels the merchant's other rows unless they were set by hand, and remembers it for new ones. */
+  /** Also relabels every other row with the merchant's key, hand-set or not, and remembers it for new ones. */
   public void setManualCategory(long userId, UUID id, String reasonKey, String category) {
     jdbc.sql("UPDATE transactions SET category = ?, category_source = 'manual' WHERE user_id = ? AND id = ?")
         .params(category, userId, id)
         .update();
     jdbc.sql("""
         UPDATE transactions SET category = ?, category_source = 'manual'
-        WHERE user_id = ? AND reason_key = ? AND (category_source IS NULL OR category_source <> 'manual')""")
+        WHERE user_id = ? AND reason_key = ?""")
         .params(category, userId, reasonKey)
         .update();
     jdbc.sql("""

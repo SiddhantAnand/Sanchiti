@@ -409,16 +409,22 @@ class ApiTest {
   void manualCategoryOverrideAppliesToSameMerchant() throws Exception {
     String body = postTx("""
         [{"date": "2026-10-01", "amount": 500, "reason": "Gym fee"},
-         {"date": "2026-09-01", "amount": 500, "reason": "Gym fee"}]""")
+         {"date": "2026-09-01", "amount": 500, "reason": "GYM FEE"},
+         {"date": "2026-09-02", "amount": 500, "reason": "Gym fees"}]""")
         .andReturn().getResponse().getContentAsString();
     String id = JSON.readTree(body).get("inserted").get(0).get("id").asString();
+    String otherId = JSON.readTree(body).get("inserted").get(1).get("id").asString();
 
     patchTx(id, "{\"category\": \"Health & Medical\"}")
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.category").value("Health & Medical"));
+    // A later change moves every row with that name, including ones already set by hand.
+    patchTx(otherId, "{\"category\": \"Personal Care\"}").andExpect(status().isOk());
 
-    List<String> sources = jdbc.sql("SELECT category || '/' || category_source FROM transactions").query(String.class).list();
-    assertThat(sources).containsOnly("Health & Medical/manual");
+    List<String> sources = jdbc.sql("SELECT reason || '/' || category || '/' || category_source FROM transactions ORDER BY date")
+        .query(String.class).list();
+    assertThat(sources).containsExactly(
+        "GYM FEE/Personal Care/manual", "Gym fees/Shopping/ai", "Gym fee/Personal Care/manual");
   }
 
   @Test

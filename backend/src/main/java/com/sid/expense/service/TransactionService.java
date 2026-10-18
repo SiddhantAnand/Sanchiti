@@ -243,7 +243,8 @@ public class TransactionService {
   }
 
   /**
-   * Manual override; also re-labels other non-manual transactions of the same merchant and remembers it. Marking one
+   * Manual override; also re-labels every other transaction with the same payee name (even ones set by hand) and
+   * remembers it. Marking one
    * side of a move between own accounts as Self Transfer marks the other side too.
    */
   /** {@code category} must already be one of the user's labels for the transaction's direction. */

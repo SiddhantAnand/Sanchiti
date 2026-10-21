@@ -182,6 +182,9 @@ function GroupView(props: {
   const addedBy = (e: SplitExpense) => (e.mine ? 'You' : e.addedBy !== null ? name(e.addedBy) : g.ownerName);
   const total = g.expenses.reduce((s, e) => s + e.amount, 0);
   const linkedLogins = new Set(g.members.map((m) => m.login).filter(Boolean));
+  const [debtView, setDebtView] = useState<'simplified' | 'direct'>('simplified');
+  const shownDebts = debtView === 'simplified' ? g.debts : g.directDebts;
+  const anyDebts = g.debts.length > 0 || g.directDebts.length > 0;
 
   async function addMember() {
     const n = await prompt({ title: 'Add a person', label: 'Name', placeholder: 'e.g. Rahul' });
@@ -256,11 +259,31 @@ function GroupView(props: {
         </div>
       </div>
 
-      {(g.debts.length > 0 || pending.length > 0 || deleteRequests.length > 0) && (
+      {(anyDebts || pending.length > 0 || deleteRequests.length > 0) && (
         <div className="card">
-          <h3 className="card-title">Who owes whom</h3>
+          <div className="card-head" style={{ marginBottom: 6 }}>
+            <h3 className="card-title">Who owes whom</h3>
+            {anyDebts && (
+              <div className="segmented" role="tablist" aria-label="How to show debts">
+                <button role="tab" aria-selected={debtView === 'simplified'} className={debtView === 'simplified' ? 'on' : ''}
+                  onClick={() => setDebtView('simplified')}>Simplified</button>
+                <button role="tab" aria-selected={debtView === 'direct'} className={debtView === 'direct' ? 'on' : ''}
+                  onClick={() => setDebtView('direct')}>Direct</button>
+              </div>
+            )}
+          </div>
+          {anyDebts && (
+            <div className="card-sub">
+              {debtView === 'simplified'
+                ? 'The fewest payments that settle everyone up.'
+                : 'What each person owes each other person, from the expenses between the two of them.'}
+            </div>
+          )}
           <div className="mini-list" style={{ marginTop: 10 }}>
-            {g.debts.map((d, i) => (
+            {anyDebts && shownDebts.length === 0 && (
+              <div className="mini-row"><div className="grow sub">Nobody owes anyone here.</div></div>
+            )}
+            {shownDebts.map((d, i) => (
               <div className="mini-row" key={i}>
                 <div className="grow"><div className="title">{name(d.from)} → {name(d.to)}</div></div>
                 <span className="num" style={{ fontWeight: 700 }}>{money(d.amount)}</span>
@@ -305,7 +328,7 @@ function GroupView(props: {
           </div>
         </div>
       )}
-      {g.debts.length === 0 && pending.length === 0 && deleteRequests.length === 0 && g.expenses.length > 0 && (
+      {!anyDebts && pending.length === 0 && deleteRequests.length === 0 && g.expenses.length > 0 && (
         <div className="alert" style={{ background: 'var(--teal-soft)', color: 'var(--teal)', borderColor: 'transparent' }}>
           <CircleCheck size={16} /> Everyone is settled up.
         </div>

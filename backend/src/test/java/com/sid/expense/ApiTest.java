@@ -503,6 +503,39 @@ class ApiTest {
   }
 
   @Test
+  void showsDirectDebtsBesideSimplifiedOnes() throws Exception {
+    long group = JSON.readTree(mvc.perform(authed(post("/api/split/groups")).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"name\": \"Flat\", \"members\": [\"Asha\", \"Ben\"]}"))
+        .andReturn().getResponse().getContentAsString()).get("id").asLong();
+    var detail = JSON.readTree(mvc.perform(authed(get("/api/split/groups/" + group)))
+        .andReturn().getResponse().getContentAsString());
+    long me = detail.get("myMemberId").asLong();
+    long asha = detail.get("members").get(1).get("id").asLong();
+    long ben = detail.get("members").get(2).get("id").asLong();
+    String expense = "{\"description\": \"%s\", \"amount\": 200, \"date\": \"2026-10-05\", \"paidBy\": %d, "
+        + "\"split\": \"exact\", \"shares\": [{\"memberId\": %d, \"amount\": 200}]}";
+    String url = "/api/split/groups/" + group + "/expenses";
+
+    // I pay for Asha, Asha pays for Ben: directly Asha owes me and Ben owes Asha; simplified, Ben just pays me.
+    mvc.perform(authed(post(url)).contentType(MediaType.APPLICATION_JSON).content(expense.formatted("Groceries", me, asha)))
+        .andExpect(status().isOk());
+    mvc.perform(authed(post(url)).contentType(MediaType.APPLICATION_JSON).content(expense.formatted("Wifi", asha, ben)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.debts", hasSize(1)))
+        .andExpect(jsonPath("$.debts[0].from").value(ben))
+        .andExpect(jsonPath("$.debts[0].to").value(me))
+        .andExpect(jsonPath("$.directDebts", hasSize(2)))
+        .andExpect(jsonPath("$.directDebts[?(@.from == " + asha + " && @.to == " + me + ")].amount").value(contains(200.0)))
+        .andExpect(jsonPath("$.directDebts[?(@.from == " + ben + " && @.to == " + asha + ")].amount").value(contains(200.0)));
+
+    // A payment between a pair reduces only that pair's direct debt.
+    mvc.perform(authed(post("/api/split/groups/" + group + "/settlements")).contentType(MediaType.APPLICATION_JSON)
+            .content("{\"from\": " + asha + ", \"to\": " + me + ", \"amount\": 150}"))
+        .andExpect(jsonPath("$.directDebts[?(@.from == " + asha + ")].amount").value(contains(50.0)))
+        .andExpect(jsonPath("$.directDebts[?(@.from == " + ben + ")].amount").value(contains(200.0)));
+  }
+
+  @Test
   void splitsExpensesInSharedGroupsWithoutTouchingTransactions() throws Exception {
     String code = JSON.readTree(mvc.perform(authed(post("/api/account/invites")))
         .andReturn().getResponse().getContentAsString()).get("code").asString();

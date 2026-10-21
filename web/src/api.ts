@@ -243,6 +243,7 @@ export type SplitGroup = {
   }[];
   balances: { memberId: number; net: number; paid: number; share: number }[];
   debts: { from: number; to: number; amount: number }[];
+  directDebts: { from: number; to: number; amount: number }[];
 };
 
 export type NewSplitExpense = {

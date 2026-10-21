@@ -63,9 +63,14 @@ public class SplitService {
 
   public record Debt(long from, long to, double amount) {}
 
+  /**
+   * {@code debts}: simplified, the fewest payments that settle everyone. {@code directDebts}: what each person owes each
+   * other person from the expenses between just the two of them, netted per pair.
+   */
   public record GroupDetail(
       long id, String name, String ownerName, boolean isOwner, Long myMemberId, List<MemberView> members,
-      List<ExpenseView> expenses, List<SettlementView> settlements, List<Balance> balances, List<Debt> debts) {}
+      List<ExpenseView> expenses, List<SettlementView> settlements, List<Balance> balances, List<Debt> debts,
+      List<Debt> directDebts) {}
 
   /** {@code shares} is used for an exact split; {@code members} for an equal split. */
   public record NewExpense(
@@ -116,7 +121,8 @@ public class SplitService {
     Long me = members.stream().filter(m -> Objects.equals(m.userId(), userId)).map(Member::id).findFirst().orElse(null);
     Map<Long, List<ShareView>> sharesByExpense = new HashMap<>();
     Map<Long, Long> shareTotal = new HashMap<>();
-    for (Share s : repo.shares(groupId)) {
+    List<Share> rawShares = repo.shares(groupId);
+    for (Share s : rawShares) {
       sharesByExpense.computeIfAbsent(s.expenseId(), k -> new ArrayList<>()).add(new ShareView(s.memberId(), major(s.amountMinor())));
       shareTotal.merge(s.memberId(), s.amountMinor(), Long::sum);
     }
@@ -138,7 +144,8 @@ public class SplitService {
         })
         .toList();
     Map<Long, Member> byId = members.stream().collect(Collectors.toMap(Member::id, m -> m));
-    List<SettlementView> settlements = repo.settlements(groupId).stream()
+    List<Settlement> rawSettlements = repo.settlements(groupId);
+    List<SettlementView> settlements = rawSettlements.stream()
         .map(s -> new SettlementView(s.id(), s.fromMember(), s.toMember(), major(s.amountMinor()), s.date(), s.status(),
             "PENDING".equals(s.status()) && approver(g, byId.get(s.toMember())) == userId,
             Objects.equals(s.createdBy(), userId)))
@@ -148,7 +155,7 @@ public class SplitService {
         major(paidTotal.getOrDefault(m.id(), 0L)), major(shareTotal.getOrDefault(m.id(), 0L)))).toList();
     return new GroupDetail(g.id(), g.name(), g.ownerName(), g.ownerId() == userId, me,
         members.stream().map(m -> new MemberView(m.id(), m.name(), m.login(), Objects.equals(m.userId(), userId))).toList(),
-        expenses, settlements, balances, debts(net));
+        expenses, settlements, balances, debts(net), directDebts(rawExpenses, rawShares, rawSettlements));
   }
 
   public void renameGroup(long userId, long groupId, String name) {
@@ -370,6 +377,35 @@ public class SplitService {
       if (owed.get(j)[1] == 0) j++;
     }
     return debts;
+  }
+
+  /** Each sharer owes the payer their share; approved settlements pay that pair down; each pair is then netted. */
+  private static List<Debt> directDebts(List<Expense> expenses, List<Share> shares, List<Settlement> settlements) {
+    Map<Long, Long> payer = expenses.stream().collect(Collectors.toMap(Expense::id, Expense::paidBy));
+    // Key "low:high"; positive means low owes high.
+    Map<String, Long> pairs = new LinkedHashMap<>();
+    for (Share s : shares) {
+      Long to = payer.get(s.expenseId());
+      if (to != null && to != s.memberId()) owe(pairs, s.memberId(), to, s.amountMinor());
+    }
+    for (Settlement s : settlements) {
+      if ("APPROVED".equals(s.status())) owe(pairs, s.fromMember(), s.toMember(), -s.amountMinor());
+    }
+    List<Debt> debts = new ArrayList<>();
+    pairs.forEach((key, amount) -> {
+      String[] ids = key.split(":");
+      long low = Long.parseLong(ids[0]);
+      long high = Long.parseLong(ids[1]);
+      if (amount > 0) debts.add(new Debt(low, high, major(amount)));
+      if (amount < 0) debts.add(new Debt(high, low, major(-amount)));
+    });
+    debts.sort(Comparator.comparingDouble(Debt::amount).reversed());
+    return debts;
+  }
+
+  private static void owe(Map<String, Long> pairs, long from, long to, long amountMinor) {
+    String key = Math.min(from, to) + ":" + Math.max(from, to);
+    pairs.merge(key, from < to ? amountMinor : -amountMinor, Long::sum);
   }
 
   private Group visible(long userId, long groupId) {

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CircleHelp, Ellipsis, Inbox, Landmark, LayoutDashboard, LoaderCircle, LogOut, ReceiptText, Settings as SettingsIcon, Sparkles, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CircleHelp, Ellipsis, Inbox, Landmark, LayoutDashboard, LoaderCircle, LogOut, ReceiptText, Settings as SettingsIcon, Sparkles, Users } from 'lucide-react';
 import { api, setUnauthorizedHandler, type Direction, type Me, type ReviewItem, type Transaction } from './api';
 import {
-  MONTHS, PERIODS, greeting, initials, isPeriodKey, period as makePeriod, periodParts, rangeLabel, type PeriodKey,
+  MONTHS, PERIODS, dayKey, greeting, initials, isPeriodKey, period as makePeriod, periodDay, periodParts, rangeLabel, toIso,
+  type PeriodKey,
 } from './format';
 import { GeminiModal } from './GeminiModal';
 import { TxDrawer, type DrawerMode } from './TxDrawer';
@@ -213,11 +214,15 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
             {showPeriod && (
               <div className="segmented" role="tablist" aria-label="Period">
                 {PERIODS.map((p) => (
-                  <button key={p.key} className={p.key === periodKey ? 'on' : ''} onClick={() => setPeriodKey(p.key)}>{p.label}</button>
+                  <button key={p.key} className={p.key === periodKey || (p.key === '1d' && periodDay(periodKey)) ? 'on' : ''}
+                    onClick={() => setPeriodKey(p.key)}>{p.label}</button>
                 ))}
               </div>
             )}
-            {showPeriod && <MonthPicker periodKey={periodKey} firstYear={firstYear} onPick={setPeriodKey} />}
+            {showPeriod && periodDay(periodKey) && (
+              <DayPicker day={periodDay(periodKey)!} firstYear={firstYear} onPick={(d) => setPeriodKey(dayKey(d))} />
+            )}
+            {showPeriod && !periodDay(periodKey) && <MonthPicker periodKey={periodKey} firstYear={firstYear} onPick={setPeriodKey} />}
             <button className="btn btn-gemini" disabled={!ai} onClick={() => setGemini(true)} title={ai ? '' : 'Gemini is not configured'}>
               <Sparkles size={16} /> Send to Gemini
             </button>
@@ -252,6 +257,24 @@ function Shell({ me, onMeChanged, onSignedOut }: { me: Me; onMeChanged: (me: Me)
       )}
       {gemini && <GeminiModal onClose={() => setGemini(false)} onDone={refresh} />}
       {splitTx && <SplitTransaction tx={splitTx} onClose={() => setSplitTx(null)} onDone={() => { setSplitTx(null); refresh(); }} />}
+    </div>
+  );
+}
+
+/** Previous / next day arrows around a date input; never goes past today. */
+function DayPicker({ day, firstYear, onPick }: { day: string; firstYear: number; onPick: (iso: string) => void }) {
+  const today = toIso(new Date());
+  const shift = (n: number) => {
+    const d = new Date(`${day}T00:00:00`);
+    d.setDate(d.getDate() + n);
+    onPick(toIso(d));
+  };
+  return (
+    <div className="day-picker">
+      <button className="icon-btn" aria-label="Previous day" onClick={() => shift(-1)}><ChevronLeft size={16} /></button>
+      <input className="input" type="date" aria-label="Day" value={day} min={`${firstYear}-01-01`} max={today}
+        onChange={(e) => e.target.value && onPick(e.target.value > today ? today : e.target.value)} />
+      <button className="icon-btn" aria-label="Next day" disabled={day >= today} onClick={() => shift(1)}><ChevronRight size={16} /></button>
     </div>
   );
 }

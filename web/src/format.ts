@@ -40,18 +40,20 @@ export const dayHeading = (s: string) => {
 export function rangeLabel(from: string, to: string) {
   const a = parseIso(from);
   const b = parseIso(to);
+  const fb = b.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  if (from === to) return fb;
   const sameYear = a.getFullYear() === b.getFullYear();
   const fa = a.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: sameYear ? undefined : 'numeric' });
-  const fb = b.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   return `${fa} – ${fb}`;
 }
 
-export type PresetKey = '7d' | '30d' | 'month' | 'lastMonth' | '90d' | 'ytd';
-/** A preset, a calendar month ("m:2026-09") or a whole year ("y:2026"). */
-export type PeriodKey = PresetKey | `m:${string}` | `y:${string}`;
+export type PresetKey = '1d' | '7d' | '30d' | 'month' | 'lastMonth' | '90d' | 'ytd';
+/** A preset, a single day ("d:2026-10-20"), a calendar month ("m:2026-09") or a whole year ("y:2026"). */
+export type PeriodKey = PresetKey | `d:${string}` | `m:${string}` | `y:${string}`;
 export type Period = { key: PeriodKey; label: string; from: string; to: string; prevFrom: string; prevTo: string };
 
 export const PERIODS: { key: PresetKey; label: string }[] = [
+  { key: '1d', label: '1D' },
   { key: '7d', label: '7D' },
   { key: '30d', label: '30D' },
   { key: 'month', label: 'This month' },
@@ -62,12 +64,15 @@ export const PERIODS: { key: PresetKey; label: string }[] = [
 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+const DAY_KEY = /^d:(\d{4}-\d{2}-\d{2})$/;
 const MONTH_KEY = /^m:(\d{4})-(\d{2})$/;
 const YEAR_KEY = /^y:(\d{4})$/;
 
 export function isPeriodKey(key: string | null): key is PeriodKey {
   if (!key) return false;
   if (PERIODS.some((p) => p.key === key)) return true;
+  const d = key.match(DAY_KEY);
+  if (d) return !Number.isNaN(parseIso(d[1]).getTime());
   const m = key.match(MONTH_KEY);
   if (m) return Number(m[2]) >= 1 && Number(m[2]) <= 12;
   return YEAR_KEY.test(key);
@@ -81,8 +86,28 @@ export function periodParts(key: PeriodKey): { year: number | null; month: numbe
   return y ? { year: Number(y[1]), month: null } : { year: null, month: null };
 }
 
+/** The ISO date a one-day key covers ("1d" is today), else null. */
+export function periodDay(key: PeriodKey, now = new Date()): string | null {
+  if (key === '1d') return toIso(now);
+  return key.match(DAY_KEY)?.[1] ?? null;
+}
+
+/** Key for one day; today stays "1d" so it keeps following the date. */
+export const dayKey = (iso: string): PeriodKey => (iso === toIso(new Date()) ? '1d' : `d:${iso}`);
+
 export function period(key: PeriodKey, now = new Date()): Period {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const day = key.match(DAY_KEY)?.[1];
+  if (day) {
+    return {
+      key,
+      label: shortDate(day),
+      from: day,
+      to: day,
+      prevFrom: toIso(addDays(parseIso(day), -1)),
+      prevTo: toIso(addDays(parseIso(day), -1)),
+    };
+  }
   const { year, month } = periodParts(key);
   if (year !== null) {
     // A calendar month or year, compared with the one before it; never runs past today.
@@ -103,6 +128,7 @@ export function period(key: PeriodKey, now = new Date()): Period {
   let from: Date;
   let to = today;
   switch (key as PresetKey) {
+    case '1d': from = today; break;
     case '7d': from = addDays(today, -6); break;
     case '30d': from = addDays(today, -29); break;
     case '90d': from = addDays(today, -89); break;

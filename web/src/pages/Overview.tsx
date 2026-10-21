@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import {
-  Area, AreaChart, CartesianGrid, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { ArrowDownLeft, ArrowRight, CalendarDays, CircleQuestionMark, PiggyBank, Scale, Sparkles, Wallet } from 'lucide-react';
 import { api, type Analysis, type Summary } from '../api';
 import { CategoryIcon, categoryMeta } from '../categories';
-import { methodLabel, money, moneyCompact, moneyWhole, rangeLabel, shortDate, type Period } from '../format';
+import { methodLabel, money, moneyCompact, moneyWhole, rangeLabel, shortDate, toIso, type Period } from '../format';
 import { Delta, Empty, Skeleton } from '../ui';
 
 const METHOD_COLORS: Record<string, string> = { UPI: 'var(--primary)', CARD: '#2DD4BF', AUTOPAY: '#F5B544', NETBANKING: '#4FB3FF', CASH: '#7BD389' };
@@ -63,6 +63,14 @@ export function Overview(props: {
   if (!cur || !prev) return <OverviewSkeleton />;
 
   const trend = cur.daily.map((d, i) => ({ ...d, prevDate: prev.daily[i]?.date, prev: prev.daily[i]?.total ?? 0 }));
+  // A one-day line has a single point, so a single day is shown as bars against the day before.
+  const oneDay = cur.daily.length === 1;
+  const dayBars = oneDay
+    ? [
+        { label: shortDate(prev.from), total: prev.total, now: false },
+        { label: cur.to === toIso(new Date()) ? 'Today' : shortDate(cur.to), total: cur.total, now: true },
+      ]
+    : [];
   const top = cur.byCategory.slice(0, 6);
   const methodTotal = cur.byPaymentMethod.reduce((s, m) => s + m.total, 0) || 1;
   const bankTotal = cur.byBank.reduce((s, b) => s + b.total, 0) || 1;
@@ -142,16 +150,29 @@ export function Overview(props: {
         <div className="card card-fill">
           <div className="card-head">
             <div>
-              <h3 className="card-title">Spending trend</h3>
+              <h3 className="card-title">{oneDay ? 'Compared with the day before' : 'Spending trend'}</h3>
               <div className="card-sub">{rangeLabel(cur.from, cur.to)}</div>
             </div>
-            <div className="legend">
-              <span><i style={{ background: 'var(--primary)' }} />This period</span>
-              <span><i style={{ background: 'var(--text-3)' }} />Previous</span>
-            </div>
+            {!oneDay && (
+              <div className="legend">
+                <span><i style={{ background: 'var(--primary)' }} />This period</span>
+                <span><i style={{ background: 'var(--text-3)' }} />Previous</span>
+              </div>
+            )}
           </div>
           <div className="chart">
             <ResponsiveContainer>
+              {oneDay ? (
+                <BarChart data={dayBars} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
+                  <CartesianGrid stroke="rgba(148,163,209,0.08)" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fill: 'var(--text-3)', fontSize: 12 }} axisLine={false} tickLine={false} />
+                  <YAxis tickFormatter={moneyCompact} tick={{ fill: 'var(--text-3)', fontSize: 11.5 }} axisLine={false} tickLine={false} width={58} />
+                  <Tooltip cursor={{ fill: 'rgba(139,123,255,.08)' }} formatter={(v) => [money(Number(v)), 'Spent']} />
+                  <Bar dataKey="total" radius={[8, 8, 0, 0]} maxBarSize={90}>
+                    {dayBars.map((d) => <Cell key={d.label} fill={d.now ? 'var(--primary)' : 'var(--text-3)'} />)}
+                  </Bar>
+                </BarChart>
+              ) : (
               <AreaChart data={trend} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
                 <defs>
                   <linearGradient id="spend" x1="0" y1="0" x2="0" y2="1">
@@ -167,6 +188,7 @@ export function Overview(props: {
                 <Area type="monotone" dataKey="total" stroke="var(--primary)" strokeWidth={2.5} fill="url(#spend)"
                   activeDot={{ r: 5, fill: 'var(--primary)', stroke: 'var(--surface)', strokeWidth: 2 }} />
               </AreaChart>
+              )}
             </ResponsiveContainer>
           </div>
         </div>

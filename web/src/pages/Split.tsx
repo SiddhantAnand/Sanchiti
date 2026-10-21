@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Check, CircleCheck, Crown, HandCoins, Link2, LoaderCircle, Pencil, Plus, Receipt, Search, Trash, UserPlus, Users, X,
+  Check, ChevronDown, CircleCheck, Crown, HandCoins, Link2, LoaderCircle, Pencil, Plus, Receipt, Search, Trash, UserPlus, Users, X,
 } from 'lucide-react';
 import { api, type Me, type NewSplitExpense, type SplitGroup, type SplitGroupSummary, type Transaction } from '../api';
 import { money, moneyWhole, shortDate, toIso } from '../format';
@@ -185,6 +185,27 @@ function GroupView(props: {
   const [debtView, setDebtView] = useState<'simplified' | 'direct'>('simplified');
   const shownDebts = debtView === 'simplified' ? g.debts : g.directDebts;
   const anyDebts = g.debts.length > 0 || g.directDebts.length > 0;
+  const [person, setPerson] = useState<number | null>(null);
+  const [personView, setPersonView] = useState<'all' | 'paid' | 'share'>('all');
+  const [open, setOpen] = useState<number | null>(null);
+  // A filter left over from another group shows everyone.
+  const p = person !== null && g.members.some((m) => m.id === person) ? person : null;
+  const isMe = (id: number) => g.members.find((m) => m.id === id)?.isMe ?? false;
+  const possessive = (id: number) => (isMe(id) ? 'your' : `${name(id)}'s`);
+  const shareOf = (e: SplitExpense, id: number) => e.shares.find((s) => s.memberId === id)?.amount ?? 0;
+  const shareFor = p ?? g.myMemberId;
+  const personBalance = p !== null ? g.balances.find((b) => b.memberId === p) : undefined;
+  const rows = [
+    ...g.expenses
+      .filter((e) => p === null
+        || (personView !== 'share' && e.paidBy === p)
+        || (personView !== 'paid' && shareOf(e, p) > 0))
+      .map((e) => ({ kind: 'e' as const, date: e.date, id: e.id, e })),
+    ...g.settlements
+      .filter((s) => s.status !== 'PENDING')
+      .filter((s) => p === null || (personView === 'all' && (s.from === p || s.to === p)) || (personView === 'paid' && s.from === p))
+      .map((s) => ({ kind: 's' as const, date: s.date, id: s.id, s })),
+  ].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
 
   async function addMember() {
     const n = await prompt({ title: 'Add a person', label: 'Name', placeholder: 'e.g. Rahul' });
@@ -335,29 +356,68 @@ function GroupView(props: {
       )}
 
       <div className="card">
-        <h3 className="card-title">Activity</h3>
-        {g.expenses.length === 0 && g.settlements.length === 0 ? (
-          <p className="muted" style={{ fontSize: 13 }}>No expenses yet. Add the first one.</p>
+        <div className="card-head" style={{ marginBottom: 10 }}>
+          <h3 className="card-title">Activity</h3>
+          {p !== null && <span className="faint" style={{ fontSize: 12.5 }}>{rows.length} entr{rows.length === 1 ? 'y' : 'ies'}</span>}
+        </div>
+        {(g.expenses.length > 0 || g.settlements.length > 0) && (
+          <div className="person-chips" role="tablist" aria-label="Filter by person">
+            <button role="tab" aria-selected={p === null} className={p === null ? 'on' : ''} onClick={() => setPerson(null)}>
+              <Users size={13} /> Everyone
+            </button>
+            {g.members.map((m) => (
+              <button key={m.id} role="tab" aria-selected={p === m.id} className={p === m.id ? 'on' : ''} onClick={() => setPerson(m.id)}>
+                <span className="chip-avatar">{m.name.slice(0, 1).toUpperCase()}</span>{m.isMe ? 'You' : m.name}
+              </button>
+            ))}
+          </div>
+        )}
+        {p !== null && personBalance && (
+          <>
+            <div className="split-me" style={{ marginTop: 12 }}>
+              <div><span>{isMe(p) ? 'You' : name(p)} paid</span><b className="num">{money(personBalance.paid)}</b></div>
+              <div><span>{possessive(p).replace(/^y/, 'Y')} share</span><b className="num">{money(personBalance.share)}</b></div>
+              <div>
+                <span>{personBalance.net > 0.004 ? 'Gets back' : personBalance.net < -0.004 ? 'Owes' : 'Balance'}</span>
+                <b className="num" style={{ color: personBalance.net > 0.004 ? 'var(--teal)' : personBalance.net < -0.004 ? 'var(--rose)' : undefined }}>
+                  {Math.abs(personBalance.net) > 0.004 ? money(Math.abs(personBalance.net)) : 'Settled'}
+                </b>
+              </div>
+            </div>
+            <div className="segmented" role="tablist" aria-label="Which entries">
+              <button role="tab" aria-selected={personView === 'all'} className={personView === 'all' ? 'on' : ''} onClick={() => setPersonView('all')}>All</button>
+              <button role="tab" aria-selected={personView === 'paid'} className={personView === 'paid' ? 'on' : ''} onClick={() => setPersonView('paid')}>
+                {isMe(p) ? 'You' : name(p)} paid
+              </button>
+              <button role="tab" aria-selected={personView === 'share'} className={personView === 'share' ? 'on' : ''} onClick={() => setPersonView('share')}>
+                {possessive(p).replace(/^y/, 'Y')} share
+              </button>
+            </div>
+          </>
+        )}
+        {rows.length === 0 ? (
+          <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+            {p === null ? 'No expenses yet. Add the first one.' : `Nothing here for ${isMe(p) ? 'you' : name(p)}.`}
+          </p>
         ) : (
           <div className="mini-list" style={{ marginTop: 10 }}>
-            {[
-              ...g.expenses.map((e) => ({ kind: 'e' as const, date: e.date, id: e.id, e })),
-              ...g.settlements.filter((s) => s.status !== 'PENDING').map((s) => ({ kind: 's' as const, date: s.date, id: s.id, s })),
-            ].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id).map((row) => row.kind === 'e' ? (
-              <div className="mini-row" key={`e${row.id}`}>
+            {rows.map((row) => row.kind === 'e' ? (
+              <div className="mini-group" key={`e${row.id}`}>
+              <div className="mini-row">
                 <span className="split-avatar"><Receipt size={14} /></span>
-                <div className="grow">
+                <button className="grow split-expand" aria-expanded={open === row.id} onClick={() => setOpen(open === row.id ? null : row.id)}>
                   <div className="title">
                     {row.e.description}
                     {row.e.deleteRequest && <span className="badge badge-rose" style={{ marginLeft: 8, fontSize: 10.5, verticalAlign: 'middle' }}>Delete requested</span>}
+                    <ChevronDown size={13} className="split-chevron" />
                   </div>
                   <div className="sub">
                     {shortDate(row.e.date)} · {name(row.e.paidBy)} paid {money(row.e.amount)}
-                    {g.myMemberId !== null && ` · your share ${money(row.e.shares.find((x) => x.memberId === g.myMemberId)?.amount ?? 0)}`}
+                    {shareFor !== null && ` · ${possessive(shareFor)} share ${money(shareOf(row.e, shareFor))}`}
                     {!row.e.mine && ` · added by ${addedBy(row.e)}`}
                     {row.e.transactionId && ' · from your transactions'}
                   </div>
-                </div>
+                </button>
                 <span className="num" style={{ fontWeight: 700 }}>{money(row.e.amount)}</span>
                 {row.e.mine ? (
                   <>
@@ -374,6 +434,21 @@ function GroupView(props: {
                     <Trash size={14} />
                   </button>
                 )}
+              </div>
+              {open === row.id && (
+                <div className="split-breakdown">
+                  {g.members
+                    .filter((m) => m.id === row.e.paidBy || shareOf(row.e, m.id) > 0)
+                    .map((m) => (
+                      <div key={m.id} className={m.id === p ? 'on' : ''}>
+                        <span className="chip-avatar">{m.name.slice(0, 1).toUpperCase()}</span>
+                        <span className="grow">{m.isMe ? 'You' : m.name}</span>
+                        {m.id === row.e.paidBy && <span className="badge badge-teal">paid {money(row.e.amount)}</span>}
+                        <span className="num">{shareOf(row.e, m.id) > 0 ? `share ${money(shareOf(row.e, m.id))}` : 'no share'}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
               </div>
             ) : (
               <div className="mini-row" key={`s${row.id}`}>

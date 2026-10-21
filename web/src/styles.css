@@ -439,6 +439,25 @@ a { color: var(--primary); text-decoration: none; }
 }
 .split-badge { margin-left: 8px; vertical-align: middle; font-size: 10.5px; padding: 1px 7px; gap: 3px;
   background: var(--primary-soft); color: var(--primary); }
+.person-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.mini-list > .mini-group:not(:first-child) > .mini-row { border-top: 1px solid var(--border); }
+.person-chips button {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 6px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text-2); font-weight: 600; font-size: 12.5px;
+}
+.person-chips button:first-child { padding-left: 12px; }
+.person-chips button.on { border-color: var(--primary); background: var(--primary-soft); color: var(--text); }
+.chip-avatar { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  font: 700 11px var(--display); background: var(--surface-3); color: var(--text-2); }
+.person-chips button.on .chip-avatar { background: var(--primary); color: #fff; }
+.split-expand { border: 0; background: none; padding: 0; text-align: left; color: inherit; min-width: 0; }
+.split-chevron { margin-left: 6px; vertical-align: middle; color: var(--text-3); transition: transform 0.15s; }
+.split-expand[aria-expanded='true'] .split-chevron { transform: rotate(180deg); }
+.split-breakdown { display: flex; flex-direction: column; gap: 4px; margin: 0 0 10px 44px; padding: 8px 10px;
+  border-radius: 12px; background: var(--surface-2); }
+.split-breakdown > div { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 8px; font-size: 13px; }
+.split-breakdown > div.on { background: var(--primary-soft); }
+.split-breakdown .num { color: var(--text-2); font-size: 12.5px; }
 .rank { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; font: 700 12px var(--display); background: var(--surface-3); color: var(--text-2); flex: none; }
 
 .gemini-card { position: relative; border: 1px solid transparent; background:

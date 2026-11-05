@@ -205,6 +205,57 @@ class ApiTest {
   }
 
   @Test
+  void detectsForeignCurrencyAndSupportsPersistentOverrides() throws Exception {
+    var response = postTx("""
+        {"date":"2026-11-04","amount":10,"currency":"USD","reason":"Foreign shop"}""")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted[0].currency").value("INR"))
+        .andExpect(jsonPath("$.inserted[0].fxCurrency").value("USD"))
+        .andExpect(jsonPath("$.inserted[0].foreignTransaction").value(true))
+        .andReturn().getResponse().getContentAsString();
+    Map<?, ?> saved = (Map<?, ?>) ((List<?>) JSON.readValue(response, Map.class).get("inserted")).getFirst();
+    String path = "/api/transactions/" + saved.get("id");
+    mvc.perform(authed(patch(path)).contentType(MediaType.APPLICATION_JSON)
+            .content("""
+                {"foreignTransactionOverride":false}"""))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.foreignTransaction").value(false))
+        .andExpect(jsonPath("$.foreignTransactionOverride").value(false));
+    mvc.perform(authed(patch(path)).contentType(MediaType.APPLICATION_JSON).content("""
+        {"note":"Keep override"}"""))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.foreignTransaction").value(false))
+        .andExpect(jsonPath("$.fxCurrency").value("USD"));
+    mvc.perform(authed(patch(path)).contentType(MediaType.APPLICATION_JSON).content("""
+        {"foreignTransactionOverride":null}"""))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.foreignTransaction").value(true));
+    mvc.perform(authed(patch(path)).contentType(MediaType.APPLICATION_JSON).content("""
+        {"foreignTransactionOverride":"yes"}"""))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void doesNotInferForeignFromMerchantAndAllowsManualFlagOnInr() throws Exception {
+    postTx("""
+        {"date":"2026-11-04","amount":100,
+         "reason":"165836/630911980329/00000000/POSISS/UNIQLO CO.,LTD"}""")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted[0].foreignTransaction").value(false));
+    postTx("""
+        {"date":"2026-11-05","amount":200,"reason":"Overseas purchase billed in INR",
+         "foreignTransactionOverride":true}""")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted[0].foreignTransaction").value(true))
+        .andExpect(jsonPath("$.inserted[0].foreignTransactionOverride").value(true));
+    postTx("""
+        {"date":"2026-11-05","amount":300,"currency":"JPY","reason":"Unconverted foreign payment"}""")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted[0].currency").value("JPY"))
+        .andExpect(jsonPath("$.inserted[0].foreignTransaction").value(true));
+  }
+
+  @Test
   void extractsPosPayeesAndReusesTheirCategories() throws Exception {
     postTx("""
         {"date":"2026-11-04","amount":3430.03,

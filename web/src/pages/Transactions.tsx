@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowDownLeft, ArrowUpRight, Funnel, Landmark, LoaderCircle, Pencil, Plus, ReceiptText, Search, Sparkles, Trash, Users, X } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Funnel, Globe, Landmark, LoaderCircle, Pencil, Plus, ReceiptText, Search, Sparkles, Trash, Users, X } from 'lucide-react';
 import { api, type Direction, type Transaction } from '../api';
 import { CategoryIcon, NEW_CATEGORY, UNCATEGORIZED, categoryMeta } from '../categories';
 import { dayHeading, methodLabel, money, rangeLabel, type Period } from '../format';
@@ -195,6 +195,13 @@ export function Transactions(props: {
                   <div className="col-main" style={{ minWidth: 0 }}>
                     <div className="payee">
                       {payee}
+                      {t.foreignTransaction && (
+                        <span className="badge badge-teal"
+                          title={t.foreignTransactionOverride === true
+                            ? 'Manually flagged as foreign' : `Original currency: ${t.fxCurrency ?? t.currency}`}>
+                          <Globe size={11} /> Foreign
+                        </span>
+                      )}
                       {inSplit.has(t.id) && <span className="badge split-badge" title="Used in a split"><Users size={11} /> Split</span>}
                     </div>
                     {t.note ? <div className="note">“{t.note}”</div> : payee !== t.reason && <div className="reason">{t.reason}</div>}

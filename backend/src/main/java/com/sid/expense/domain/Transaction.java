@@ -26,7 +26,9 @@ public record Transaction(
     Double fxAmount,
     String fxCurrency,
     Double fxRate,
-    LocalDate fxDate) {
+    LocalDate fxDate,
+    boolean foreignTransaction,
+    Boolean foreignTransactionOverride) {
 
   public long amountMinor() {
     return Math.round(amount * 100);

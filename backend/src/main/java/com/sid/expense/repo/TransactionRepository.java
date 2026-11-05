@@ -25,7 +25,8 @@ public class TransactionRepository {
 
   private static final String COLUMNS = """
       id, date, amount_minor, currency, direction, reason, merchant, payment_method, upi_ref, card_last4, bank,
-      category, category_source, note, created_at, fx_amount_minor, fx_currency, fx_rate, fx_date""";
+      category, category_source, note, created_at, fx_amount_minor, fx_currency, fx_rate, fx_date,
+      foreign_transaction_override""";
 
   private static final RowMapper<Transaction> MAPPER = (rs, i) -> {
     Long fxMinor = rs.getObject("fx_amount_minor", Long.class);
@@ -49,7 +50,11 @@ public class TransactionRepository {
       fxMinor == null ? null : fxMinor / 100.0,
       rs.getString("fx_currency"),
       fxRate == null ? null : fxRate.doubleValue(),
-      rs.getObject("fx_date", LocalDate.class));
+      rs.getObject("fx_date", LocalDate.class),
+      rs.getObject("foreign_transaction_override", Boolean.class) != null
+          ? rs.getBoolean("foreign_transaction_override")
+          : !"INR".equals(rs.getString("fx_currency") != null ? rs.getString("fx_currency") : rs.getString("currency")),
+      rs.getObject("foreign_transaction_override", Boolean.class));
   };
 
   /** What was charged in a foreign currency, before conversion to INR; all null for INR payments. */
@@ -61,14 +66,14 @@ public class TransactionRepository {
       long userId, UUID id, LocalDate date, long amountMinor, String currency, String direction, String reason,
       String reasonKey, String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
       String category, String categorySource, String dedupeKey, String note, Long fxAmountMinor, String fxCurrency,
-      java.math.BigDecimal fxRate, LocalDate fxDate) {}
+      java.math.BigDecimal fxRate, LocalDate fxDate, Boolean foreignTransactionOverride) {}
 
   /** Replaces every user-editable column; the dedupe key keeps identifying the originally received record. */
   public record EditedTransaction(
       long userId, UUID id, LocalDate date, long amountMinor, String currency, String direction, String reason,
       String reasonKey, String merchant, String paymentMethod, String upiRef, String cardLast4, String bank,
       String category, String categorySource, String note, Long fxAmountMinor, String fxCurrency,
-      java.math.BigDecimal fxRate, LocalDate fxDate) {}
+      java.math.BigDecimal fxRate, LocalDate fxDate, Boolean foreignTransactionOverride) {}
 
   public record KnownCategory(String category, String source) {}
 
@@ -186,10 +191,11 @@ public class TransactionRepository {
         INSERT INTO transactions
           (user_id, id, date, amount_minor, currency, direction, reason, reason_key, merchant, payment_method, upi_ref,
            card_last4, bank, category, category_source, dedupe_key, note, fx_amount_minor, fx_currency, fx_rate,
-           fx_date)
+           fx_date, foreign_transaction_override)
         VALUES (:userId, :id, :date, :amountMinor, :currency, :direction, :reason, :reasonKey, :merchant,
            :paymentMethod, :upiRef, :cardLast4, :bank, :category, :categorySource, :dedupeKey, :note,
-           CAST(:fxAmountMinor AS BIGINT), CAST(:fxCurrency AS TEXT), CAST(:fxRate AS NUMERIC), CAST(:fxDate AS DATE))""")
+           CAST(:fxAmountMinor AS BIGINT), CAST(:fxCurrency AS TEXT), CAST(:fxRate AS NUMERIC), CAST(:fxDate AS DATE),
+           CAST(:foreignTransactionOverride AS BOOLEAN))""")
         .paramSource(t)
         .update();
   }
@@ -201,7 +207,8 @@ public class TransactionRepository {
           payment_method = :paymentMethod, upi_ref = :upiRef, card_last4 = :cardLast4, bank = :bank,
           category = :category, category_source = :categorySource, note = :note,
           fx_amount_minor = CAST(:fxAmountMinor AS BIGINT), fx_currency = CAST(:fxCurrency AS TEXT),
-          fx_rate = CAST(:fxRate AS NUMERIC), fx_date = CAST(:fxDate AS DATE)
+          fx_rate = CAST(:fxRate AS NUMERIC), fx_date = CAST(:fxDate AS DATE),
+          foreign_transaction_override = CAST(:foreignTransactionOverride AS BOOLEAN)
         WHERE id = :id AND user_id = :userId""")
         .paramSource(t)
         .update();

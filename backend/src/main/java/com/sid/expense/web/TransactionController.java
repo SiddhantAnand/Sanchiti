@@ -52,7 +52,7 @@ public class TransactionController {
   private static final int MAX_BATCH = 500;
   private static final Set<String> EDITABLE = Set.of(
       "date", "amount", "reason", "currency", "bankName", "paymentMethod", "cardLast4", "upiRef", "note", "category",
-      "direction");
+      "direction", "foreignTransactionOverride");
 
   record ReviewNote(int index, String issue) {}
 
@@ -332,6 +332,7 @@ public class TransactionController {
       merged.put("cardLast4", tx.cardLast4());
       merged.put("upiRef", tx.upiRef());
       merged.put("note", tx.note());
+      merged.put("foreignTransactionOverride", tx.foreignTransactionOverride());
       patch.forEach((k, v) -> merged.put(String.valueOf(k), v));
       merged.remove("category");
       merged.put("direction", direction.json());

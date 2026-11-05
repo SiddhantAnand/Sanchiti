@@ -37,6 +37,7 @@ function initialFields(mode: DrawerMode): TransactionFields {
     return {
       date: t.date, amount: String(t.amount), reason: t.reason, currency: t.currency, bankName: t.bank,
       paymentMethod: t.paymentMethod, cardLast4: t.cardLast4, upiRef: t.upiRef, note: t.note, direction: t.direction,
+      foreignTransactionOverride: t.foreignTransactionOverride,
     };
   }
   if (mode.kind === 'review') {
@@ -273,6 +274,19 @@ export function TxDrawer(props: {
         <label className="field">
           <span>Currency</span>
           <input className="input" maxLength={3} value={f.currency} onChange={(e) => set('currency', e.target.value.toUpperCase())} />
+        </label>
+
+        <label className="field full">
+          <span>Foreign transaction</span>
+          <select className="select"
+            value={f.foreignTransactionOverride == null ? 'auto' : String(f.foreignTransactionOverride)}
+            onChange={(e) => set('foreignTransactionOverride',
+              e.target.value === 'auto' ? null : e.target.value === 'true')}>
+            <option value="auto">Automatic — original non-INR currency</option>
+            <option value="true">Foreign — manually flagged</option>
+            <option value="false">Not foreign — manual override</option>
+          </select>
+          <span className="hint">Currency is a signal, not proof of purchase location. Use a manual flag for foreign purchases charged in INR.</span>
         </label>
 
         <label className="field full">

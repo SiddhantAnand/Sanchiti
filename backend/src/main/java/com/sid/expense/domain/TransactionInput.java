@@ -12,7 +12,8 @@ import java.util.regex.Pattern;
 /** Validated POST body item. Amounts are kept in minor units (paise) to avoid float errors. */
 public record TransactionInput(
     LocalDate date, long amountMinor, String reason, String currency, String bank, String paymentMethod,
-    String cardLast4, String upiRef, String note, Direction direction, String category) {
+    String cardLast4, String upiRef, String note, Direction direction, String category,
+    Boolean foreignTransactionOverride) {
 
   public static final String BASE_CURRENCY = "INR";
   private static final BigDecimal MAX_AMOUNT = new BigDecimal("1000000000");
@@ -112,32 +113,42 @@ public record TransactionInput(
     String category = blankToNull(map.get("category"));
     if (category != null && category.length() > 60) issues.add(new Issue("category", "Category is too long"));
 
+    Object rawForeign = map.get("foreignTransactionOverride");
+    if (rawForeign != null && !(rawForeign instanceof Boolean)) {
+      issues.add(new Issue("foreignTransactionOverride", "Must be true, false or null for automatic detection"));
+    }
+
     return issues.isEmpty()
         ? new Parsed(
             new TransactionInput(
-                date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, note, direction, category),
+                date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, note, direction, category,
+                (Boolean) rawForeign),
             List.of())
         : new Parsed(null, issues);
   }
 
   public TransactionInput withBank(String canonical) {
     return new TransactionInput(
-        date, amountMinor, reason, currency, canonical, paymentMethod, cardLast4, upiRef, note, direction, category);
+        date, amountMinor, reason, currency, canonical, paymentMethod, cardLast4, upiRef, note, direction, category,
+        foreignTransactionOverride);
   }
 
   public TransactionInput withCategory(String label) {
     return new TransactionInput(
-        date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, note, direction, label);
+        date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, note, direction, label,
+        foreignTransactionOverride);
   }
 
   public TransactionInput withNote(String newNote) {
     return new TransactionInput(
-        date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, newNote, direction, category);
+        date, amountMinor, reason, currency, bank, paymentMethod, cardLast4, upiRef, newNote, direction, category,
+        foreignTransactionOverride);
   }
 
   public TransactionInput withMoney(long newAmountMinor, String newCurrency) {
     return new TransactionInput(
-        date, newAmountMinor, reason, newCurrency, bank, paymentMethod, cardLast4, upiRef, note, direction, category);
+        date, newAmountMinor, reason, newCurrency, bank, paymentMethod, cardLast4, upiRef, note, direction, category,
+        foreignTransactionOverride);
   }
 
   public boolean isCredit() {

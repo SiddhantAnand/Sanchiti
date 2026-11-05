@@ -21,6 +21,8 @@ export type Transaction = {
   fxCurrency: string | null;
   fxRate: number | null;
   fxDate: string | null;
+  foreignTransaction: boolean;
+  foreignTransactionOverride: boolean | null;
 };
 
 export type Page = { total: number; items: Transaction[] };
@@ -98,6 +100,7 @@ export type UserRow = { login: string; name: string; admin: boolean; createdAt: 
 export type AiStatus = { enabled: boolean; source: 'settings' | 'environment' | 'none'; keyHint: string | null; model: string };
 
 export type TransactionFields = {
+  foreignTransactionOverride?: boolean | null;
   date: string;
   amount: string;
   reason: string;

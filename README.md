@@ -7,6 +7,11 @@ Bank narrations are kept intact, while recognised payment formats show an extrac
 For example, `165836/630911980329/00000000/POSISS/UNIQLO CO.,LTD` displays `UNIQLO` as a card payment.
 Existing unparsed POS issuer entries are repaired automatically by the database migration at startup.
 
+Transactions with an original non-INR currency show a **Foreign** badge, including existing converted entries.
+The transaction editor allows a manual foreign/not-foreign override or a return to automatic currency detection.
+This is a currency-based signal, not confirmation of purchase location; merchant names and POSISS do not trigger it.
+The API exposes `foreignTransaction` and nullable `foreignTransactionOverride` (POST/PATCH: true, false, or null).
+
 | Part | Stack | Folder |
 |---|---|---|
 | API | Java 21, Spring Boot 4, PostgreSQL, Flyway | `backend/` |

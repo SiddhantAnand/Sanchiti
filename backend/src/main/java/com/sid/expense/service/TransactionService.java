@@ -141,7 +141,8 @@ public class TransactionService {
           userId, id, s.date(), s.amountMinor(), s.currency(), s.direction().name(), s.reason(), reasonKey,
           d.merchant(), d.method(), upiRef, d.cardLast4(), d.bank(),
           category.map(KnownCategory::category).orElse(null), category.map(KnownCategory::source).orElse(null),
-          dedupeKey, s.note(), c.fx().amountMinor(), c.fx().currency(), c.fx().rate(), c.fx().date()));
+          dedupeKey, s.note(), c.fx().amountMinor(), c.fx().currency(), c.fx().rate(), c.fx().date(),
+          s.foreignTransactionOverride()));
       pairOwnTransfer(userId, id, s, d.bank(), category.map(KnownCategory::category).orElse(null),
           category.map(KnownCategory::source).orElse(null));
       ids.add(id);
@@ -206,7 +207,7 @@ public class TransactionService {
     repo.update(new EditedTransaction(
         userId, old.id(), s.date(), s.amountMinor(), s.currency(), s.direction().name(), s.reason(), d.reasonKey(),
         d.merchant(), d.method(), d.upiRef(), d.cardLast4(), d.bank(), category, source, s.note(),
-        kept.amountMinor(), kept.currency(), kept.rate(), kept.date()));
+        kept.amountMinor(), kept.currency(), kept.rate(), kept.date(), s.foreignTransactionOverride()));
   }
 
   /** Debits go back to Gemini; credits go back to their rule-based category. */
@@ -215,13 +216,13 @@ public class TransactionService {
     repo.reasonKeyOf(userId, tx.id()).ifPresent(key -> repo.clearCategory(userId, tx.id(), key));
     if (!tx.isCredit()) return;
     var input = new TransactionInput(tx.date(), tx.amountMinor(), tx.reason(), tx.currency(), tx.bank(),
-        tx.paymentMethod(), tx.cardLast4(), tx.upiRef(), tx.note(), tx.direction(), null);
+        tx.paymentMethod(), tx.cardLast4(), tx.upiRef(), tx.note(), tx.direction(), null, tx.foreignTransactionOverride());
     Derived d = derive(input);
     category(userId, userName, d, input).ifPresent(k -> repo.update(new EditedTransaction(
         userId, tx.id(), tx.date(), tx.amountMinor(), tx.currency(), tx.direction().name(), tx.reason(),
         d.reasonKey(), d.merchant(), d.method(), d.upiRef(), d.cardLast4(), d.bank(), k.category(), k.source(),
         tx.note(), tx.fxAmountMinor(), tx.fxCurrency(), tx.fxRate() == null ? null : BigDecimal.valueOf(tx.fxRate()),
-        tx.fxDate())));
+        tx.fxDate(), tx.foreignTransactionOverride())));
   }
 
   /**

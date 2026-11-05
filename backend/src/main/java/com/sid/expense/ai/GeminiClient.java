@@ -74,6 +74,9 @@ public class GeminiClient implements AiClient {
           .retrieve()
           .body(String.class);
     } catch (RestClientResponseException e) {
+      if (e.getStatusCode().value() == 503) {
+        throw new AiException("Gemini is temporarily unavailable due to high demand. Please try again in a moment.");
+      }
       String detail = e.getResponseBodyAsString();
       throw new AiException("Gemini returned " + e.getStatusCode().value() + ": "
           + detail.substring(0, Math.min(300, detail.length())));

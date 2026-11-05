@@ -15,6 +15,7 @@ export function GeminiModal({ onClose, onDone }: { onClose: () => void; onDone: 
   const [steps, setSteps] = useState<{ categorize: StepState; analyse: StepState } | null>(null);
   const running = steps !== null && Object.values(steps).some((s) => s.state === 'running');
   const finished = steps !== null && !running;
+  const hasFailures = steps !== null && Object.values(steps).some((s) => s.state === 'error');
 
   useEffect(() => {
     api.transactions({ category: 'Uncategorized', limit: 1 })
@@ -23,30 +24,38 @@ export function GeminiModal({ onClose, onDone }: { onClose: () => void; onDone: 
   }, []);
 
   async function run() {
-    const s = { categorize: { state: 'idle' } as StepState, analyse: { state: 'idle' } as StepState };
-    setSteps({ ...s });
-    if (doCategorize) {
+    const retrying = steps !== null;
+    const runCategorize = doCategorize && (!steps || steps.categorize.state === 'error');
+    const runAnalysis = doAnalyse && (!steps || steps.analyse.state === 'error');
+    let failed = false;
+    if (!retrying) {
+      setSteps({ categorize: { state: 'idle' }, analyse: { state: 'idle' } });
+    }
+    if (runCategorize) {
       setSteps((x) => x && { ...x, categorize: { state: 'running' } });
       try {
         const r = await api.categorize();
         setSteps((x) => x && { ...x, categorize: { state: 'done', text: `Categorised ${r.categorized} transaction${r.categorized === 1 ? '' : 's'}${r.pending ? ` · ${r.pending} still pending` : ''}` } });
       } catch (e) {
+        failed = true;
         setSteps((x) => x && { ...x, categorize: { state: 'error', text: (e as Error).message } });
       }
     }
-    if (doAnalyse) {
+    if (runAnalysis) {
       setSteps((x) => x && { ...x, analyse: { state: 'running' } });
       try {
         const r = await api.runAnalysis(window_ === 'last7' ? toIso(new Date()) : undefined);
         const text = r.status === 'skipped' ? r.reason ?? 'Nothing to analyse'
           : r.status === 'cached' ? 'No changes since the last analysis — kept it'
           : `“${r.analysis?.insights.headline}”`;
+        if (r.status === 'skipped') failed = true;
         setSteps((x) => x && { ...x, analyse: { state: r.status === 'skipped' ? 'error' : 'done', text } });
       } catch (e) {
+        failed = true;
         setSteps((x) => x && { ...x, analyse: { state: 'error', text: (e as Error).message } });
       }
     }
-    toast('ok', 'Gemini is done');
+    toast(failed ? 'err' : 'ok', failed ? 'Gemini could not complete every selected task' : 'Gemini is done');
     onDone();
   }
 
@@ -68,7 +77,9 @@ export function GeminiModal({ onClose, onDone }: { onClose: () => void; onDone: 
         </div>
       }
       foot={
-        finished ? <button className="btn btn-primary" onClick={onClose}>Done</button> : (
+        finished && !hasFailures ? <button className="btn btn-primary" onClick={onClose}>Done</button> : finished ? (
+          <button className="btn btn-gemini" onClick={run}><Sparkles size={16} /> Retry failed</button>
+        ) : (
           <>
             <button className="btn btn-ghost" disabled={running} onClick={onClose}>Cancel</button>
             <button className="btn btn-gemini" disabled={running || (!doCategorize && !doAnalyse)} onClick={run}>

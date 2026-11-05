@@ -44,6 +44,24 @@ class NarrationParserTest {
   }
 
   @Test
+  void parsesPosIssuerNarrationsWithoutBankReferencesOrCompanySuffix() {
+    String reason = "165836/630911980329/00000000/POSISS/UNIQLO CO.,LTD";
+    Narration n = NarrationParser.parse(reason);
+    assertThat(n.merchant()).isEqualTo("UNIQLO");
+    assertThat(n.method()).isEqualTo("CARD");
+    assertThat(n.upiRef()).isNull();
+    assertThat(n.cardLast4()).isNull();
+    assertThat(NarrationParser.describeForAi(reason)).isEqualTo("UNIQLO (card payment)");
+    assertThat(NarrationParser.parse("Debit and 184918/630913003256/00000000/posiss/Metro Tokyo").merchant())
+        .isEqualTo("Metro Tokyo");
+    assertThat(NarrationParser.parse("POSISS/7-ELEVEN").merchant()).isEqualTo("7-ELEVEN");
+    assertThat(NarrationParser.parse("POSISS/LTD Store").merchant()).isEqualTo("LTD Store");
+    assertThat(NarrationParser.parse("POSISS/").merchant()).isNull();
+    assertThat(NarrationParser.parse("POSISS/00000000").merchant()).isNull();
+    assertThat(NarrationParser.parse("Lunch/POSISS/UNIQLO").merchant()).isNull();
+  }
+
+  @Test
   void parsesDebitEntityNarrations() {
     assertThat(NarrationParser.parse("Debit and Entity: HALLI THO").merchant()).isEqualTo("HALLI THO");
   }

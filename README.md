@@ -3,6 +3,10 @@
 Personal finance tracker: bank SMS in (e.g. from an iPhone Shortcut), categorised spending, per-bank totals and
 weekly Gemini insights out. Multi-user (invite-only); every user sees only their own data.
 
+Bank narrations are kept intact, while recognised payment formats show an extracted merchant as the payee.
+For example, `165836/630911980329/00000000/POSISS/UNIQLO CO.,LTD` displays `UNIQLO` as a card payment.
+Existing unparsed POS issuer entries are repaired automatically by the database migration at startup.
+
 | Part | Stack | Folder |
 |---|---|---|
 | API | Java 21, Spring Boot 4, PostgreSQL, Flyway | `backend/` |

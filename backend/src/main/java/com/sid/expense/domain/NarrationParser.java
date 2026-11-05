@@ -56,6 +56,10 @@ public final class NarrationParser {
   private static final Pattern SOURCE_PREFIX =
       Pattern.compile("^(?:debit|credit|investment deduction)\\s+and\\s+", Pattern.CASE_INSENSITIVE);
   private static final Pattern UPI_MANDATE = Pattern.compile("^UPI\\s+mandate\\s*/\\s*(.+)$", Pattern.CASE_INSENSITIVE);
+  private static final Pattern POS_PAYEE =
+      Pattern.compile("^(?:\\d+\\s*/\\s*)*POSISS\\s*/\\s*(.+)$", Pattern.CASE_INSENSITIVE);
+  private static final Pattern POS_COMPANY_SUFFIX =
+      Pattern.compile("(?:\\s+|,\\s*)(?:co\\.?\\s*,?\\s*)?(?:ltd\\.?|limited)\\s*$", Pattern.CASE_INSENSITIVE);
   // "SIP/Edelweiss ...", "Stocks SIP/Groww ...", "221006/6276.../ECMISS/Klook Travel T", "E-Mandate/Groww ...",
   // "PAYMENT ALERT!/Indian Clearing Corporation Lt"
   private static final Pattern SLASH_PAYEE =
@@ -70,6 +74,14 @@ public final class NarrationParser {
       return new Narration(merchant(mandate.group(1)), "AUTOPAY", null, null, null, null, null, null);
     }
     if (UPI_PREFIX.matcher(text).find()) return parseUpi(text);
+
+    Matcher pos = POS_PAYEE.matcher(text);
+    if (pos.matches()) {
+      String name = merchant(POS_COMPANY_SUFFIX.matcher(pos.group(1)).replaceFirst(""));
+      if (LETTER.matcher(name).find()) {
+        return new Narration(name, "CARD", null, null, null, null, null, null);
+      }
+    }
 
     Matcher slash = SLASH_PAYEE.matcher(text);
     if (slash.matches()) {

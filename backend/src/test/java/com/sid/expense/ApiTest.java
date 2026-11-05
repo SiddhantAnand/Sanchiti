@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,8 +36,10 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -141,6 +144,7 @@ class ApiTest {
   @Autowired JdbcClient jdbc;
   @Autowired StubAi ai;
   @Autowired AccountService accounts;
+  @Autowired DataSource dataSource;
 
   /** The owner's web session (login "siddhant" from application-test.properties). */
   Cookie session;
@@ -198,6 +202,52 @@ class ApiTest {
         .andExpect(jsonPath("$.inserted[0].currency").value("INR"))
         .andExpect(jsonPath("$.inserted[0].category").value("Food & Dining"))
         .andExpect(jsonPath("$.inserted[0].categorySource").value("ai"));
+  }
+
+  @Test
+  void extractsPosPayeesAndReusesTheirCategories() throws Exception {
+    postTx("""
+        {"date":"2026-11-04","amount":3430.03,
+         "reason":"165836/630911980329/00000000/POSISS/UNIQLO CO.,LTD"}""")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted[0].merchant").value("UNIQLO"))
+        .andExpect(jsonPath("$.inserted[0].paymentMethod").value("CARD"))
+        .andExpect(jsonPath("$.inserted[0].reason").value("165836/630911980329/00000000/POSISS/UNIQLO CO.,LTD"));
+    postTx("""
+        {"date":"2026-11-05","amount":2000,
+         "reason":"165837/630911980330/00000000/POSISS/UNIQLO CO.,LTD"}""")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.inserted[0].merchant").value("UNIQLO"));
+    assertThat(ai.calls).containsExactly("categorize");
+  }
+
+  @Test
+  void repairsSavedPosPayeesWithoutChangingRawDataOrCategories() throws Exception {
+    postTx("""
+        {"date":"2026-11-04","amount":3430.03,
+         "reason":"165836/630911980329/00000000/POSISS/UNIQLO CO.,LTD"}""")
+        .andExpect(status().isCreated());
+    jdbc.sql("""
+        UPDATE transactions SET merchant = NULL, payment_method = NULL, reason_key = 'posiss uniqlo co'
+        """).update();
+    jdbc.sql("DELETE FROM reason_categories").update();
+    jdbc.sql("""
+        INSERT INTO reason_categories (user_id, reason_key, category, source)
+        SELECT user_id, reason_key, category, 'manual' FROM transactions
+        """).update();
+    var before = jdbc.sql("SELECT reason, dedupe_key, category, category_source FROM transactions")
+        .query().singleRow();
+    try (var connection = dataSource.getConnection()) {
+      ScriptUtils.executeSqlScript(connection,
+          new ClassPathResource("db/migration/V12__fix_pos_issuer_payees.sql"));
+    }
+    assertThat(jdbc.sql("SELECT reason, dedupe_key, category, category_source FROM transactions")
+        .query().singleRow()).isEqualTo(before);
+    assertThat(jdbc.sql("SELECT merchant FROM transactions").query(String.class).single()).isEqualTo("UNIQLO");
+    assertThat(jdbc.sql("SELECT payment_method FROM transactions").query(String.class).single()).isEqualTo("CARD");
+    assertThat(jdbc.sql("SELECT reason_key FROM transactions").query(String.class).single()).isEqualTo("uniqlo");
+    assertThat(jdbc.sql("SELECT source FROM reason_categories WHERE reason_key = 'uniqlo'")
+        .query(String.class).single()).isEqualTo("manual");
   }
 
   @Test

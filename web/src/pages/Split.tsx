@@ -468,7 +468,7 @@ function GroupView(props: {
 }
 
 export function ExpenseDrawer({ group: g, initialTx, expense, onClose, onSave }: {
-  group: SplitGroup; initialTx?: Transaction; expense?: SplitExpense; onClose: () => void; onSave: (e: NewSplitExpense) => void;
+  group: SplitGroup; initialTx?: Transaction; expense?: SplitExpense; onClose: () => void; onSave: (e: NewSplitExpense) => Promise<void>;
 }) {
   const shareAmounts = expense?.shares.map((s) => s.amount) ?? [];
   const wasEqual = !expense || Math.max(...shareAmounts) - Math.min(...shareAmounts) < 0.015;
@@ -484,6 +484,7 @@ export function ExpenseDrawer({ group: g, initialTx, expense, onClose, onSave }:
   const [linkedId, setLinkedId] = useState<string | null>(expense?.transactionId ?? null);
   const [q, setQ] = useState('');
   const [matches, setMatches] = useState<Transaction[] | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (!q.trim()) return setMatches(null);
@@ -508,19 +509,30 @@ export function ExpenseDrawer({ group: g, initialTx, expense, onClose, onSave }:
     setMatches(null);
   }
 
-  function save() {
+  async function save() {
+    if (saving) return;
+    setSaving(true);
     const linked = tx?.id ?? linkedId;
-    onSave({
-      description: description.trim(), amount, date, paidBy, split,
-      members: split === 'equal' ? included : undefined,
-      shares: split === 'exact' ? Object.entries(exact).filter(([, v]) => Number(v) > 0).map(([id, v]) => ({ memberId: Number(id), amount: v })) : undefined,
-      transactionId: linked && paidBy === g.myMemberId ? linked : undefined,
-    });
+    try {
+      await onSave({
+        description: description.trim(), amount, date, paidBy, split,
+        members: split === 'equal' ? included : undefined,
+        shares: split === 'exact' ? Object.entries(exact).filter(([, v]) => Number(v) > 0).map(([id, v]) => ({ memberId: Number(id), amount: v })) : undefined,
+        transactionId: linked && paidBy === g.myMemberId ? linked : undefined,
+      });
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
     <Drawer title={expense ? 'Edit expense' : 'Add expense'} sub={`${g.name} · not added to your Transactions or Overview`} onClose={onClose}
-      foot={<><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!valid} onClick={save}>{expense ? 'Save changes' : 'Save expense'}</button></>}>
+      foot={<>
+        <button className="btn btn-ghost" disabled={saving} onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" disabled={!valid || saving} onClick={save}>
+          {saving && <LoaderCircle size={16} className="spinner" />} {expense ? 'Save changes' : 'Save expense'}
+        </button>
+      </>}>
       {g.myMemberId !== null && (
         <div className="field">
           <span>Use one of your transactions <span className="hint">optional · fills in the details</span></span>

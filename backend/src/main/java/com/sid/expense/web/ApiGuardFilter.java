@@ -33,7 +33,8 @@ public class ApiGuardFilter extends OncePerRequestFilter {
   static final String CSRF_HEADER = "X-Requested-With";
   static final String SMS_PATH = "/api/transactions/sms";
 
-  private static final Set<String> PUBLIC = Set.of("/api/auth/login", "/api/auth/logout", "/api/auth/signup");
+  private static final Set<String> PUBLIC =
+      Set.of("/api/auth/login", "/api/auth/logout", "/api/auth/signup", "/api/auth/forgot", "/api/auth/reset");
   private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS");
   private static final String CSP = String.join("; ",
       "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'", "img-src 'self' data:",

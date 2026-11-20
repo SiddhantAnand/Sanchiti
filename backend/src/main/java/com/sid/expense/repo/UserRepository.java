@@ -1,5 +1,6 @@
 package com.sid.expense.repo;
 
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -106,5 +107,29 @@ public class UserRepository {
   /** Deletes the invite and reports whether it was valid; each code works once. */
   public boolean useInvite(String codeHash) {
     return jdbc.sql("DELETE FROM invites WHERE code_hash = ? AND expires_at > now()").param(codeHash).update() > 0;
+  }
+
+  /** Replaces the user's reset code, unless one was made less than {@code minAge} ago; reports whether it did. */
+  public boolean createReset(long userId, String codeHash, OffsetDateTime expiresAt, Duration minAge) {
+    jdbc.sql("DELETE FROM password_resets WHERE expires_at < now()").update();
+    return jdbc.sql("""
+        INSERT INTO password_resets (user_id, code_hash, expires_at) VALUES (?, ?, ?)
+        ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at,
+          created_at = now()
+        WHERE password_resets.created_at <= now() - make_interval(secs => ?)""")
+        .params(userId, codeHash, expiresAt, minAge.toSeconds())
+        .update() > 0;
+  }
+
+  /** Deletes the reset code and returns its user if it was valid; each code works once. */
+  public Optional<Long> useReset(String codeHash) {
+    return jdbc.sql("DELETE FROM password_resets WHERE code_hash = ? AND expires_at > now() RETURNING user_id")
+        .param(codeHash)
+        .query(Long.class)
+        .optional();
+  }
+
+  public Optional<User> findById(long id) {
+    return jdbc.sql("SELECT " + COLUMNS + " FROM users u WHERE u.id = ?").param(id).query(MAPPER).optional();
   }
 }

@@ -29,9 +29,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
@@ -1182,6 +1185,74 @@ class ApiTest {
     mvc.perform(get("/api/auth/me").cookie(other)).andExpect(status().isUnauthorized());
     mvc.perform(get("/api/auth/me").cookie(session)).andExpect(status().isOk());
     signIn("siddhant", "new-password-1");
+  }
+
+  @Test
+  @ExtendWith(OutputCaptureExtension.class)
+  void resetsAForgottenPasswordWithACodeFromTheServerLog(CapturedOutput log) throws Exception {
+    Cookie other = signIn("siddhant", "test-password");
+    mvc.perform(post("/api/auth/forgot").contentType(MediaType.APPLICATION_JSON).content("{\"login\": \"nobody\"}"))
+        .andExpect(status().isAccepted());
+    mvc.perform(post("/api/auth/forgot").contentType(MediaType.APPLICATION_JSON).content("{\"login\": \"Siddhant\"}"))
+        .andExpect(status().isAccepted());
+    var match = java.util.regex.Pattern.compile("Password reset code for 'siddhant' .*: (\\S+)").matcher(log.getAll());
+    assertThat(match.find()).isTrue();
+    String code = match.group(1);
+
+    // Asking again straight away keeps the first code instead of logging another.
+    mvc.perform(post("/api/auth/forgot").contentType(MediaType.APPLICATION_JSON).content("{\"login\": \"siddhant\"}"))
+        .andExpect(status().isAccepted());
+    assertThat(log.getAll().split("Password reset code for", -1)).hasSize(2);
+
+    String reset = JSON.writeValueAsString(Map.of("code", code, "password", "reset-password-1"));
+    mvc.perform(post("/api/auth/reset").contentType(MediaType.APPLICATION_JSON).content(reset.replace(code, "bad")))
+        .andExpect(status().isForbidden());
+    mvc.perform(post("/api/auth/reset").contentType(MediaType.APPLICATION_JSON)
+            .content(JSON.writeValueAsString(Map.of("code", code, "password", "short"))))
+        .andExpect(status().isBadRequest());
+    mvc.perform(post("/api/auth/reset").contentType(MediaType.APPLICATION_JSON).content(reset))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Set-Cookie", containsString("session=")))
+        .andExpect(jsonPath("$.login").value("siddhant"));
+    mvc.perform(post("/api/auth/reset").contentType(MediaType.APPLICATION_JSON).content(reset))
+        .andExpect(status().isForbidden());
+
+    mvc.perform(get("/api/auth/me").cookie(other)).andExpect(status().isUnauthorized());
+    mvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+            .content("{\"login\": \"siddhant\", \"password\": \"test-password\"}"))
+        .andExpect(status().isUnauthorized());
+    signIn("siddhant", "reset-password-1");
+  }
+
+  @Test
+  void adminGivesAResetCodeToSomeoneWhoForgotTheirPassword() throws Exception {
+    String invite = JSON.readTree(mvc.perform(authed(post("/api/account/invites")))
+        .andReturn().getResponse().getContentAsString()).get("code").asString();
+    mvc.perform(post("/api/auth/signup").contentType(MediaType.APPLICATION_JSON).content(JSON.writeValueAsString(
+        Map.of("invite", invite, "login", "priya", "name", "Priya", "password", "priya-password"))));
+    Cookie priya = signIn("priya", "priya-password");
+
+    mvc.perform(as(priya, post("/api/account/reset-codes")).contentType(MediaType.APPLICATION_JSON)
+        .content("{\"login\": \"siddhant\"}")).andExpect(status().isForbidden());
+    mvc.perform(authed(post("/api/account/reset-codes")).contentType(MediaType.APPLICATION_JSON)
+        .content("{\"login\": \"nobody\"}")).andExpect(status().isNotFound());
+    String first = JSON.readTree(mvc.perform(authed(post("/api/account/reset-codes"))
+            .contentType(MediaType.APPLICATION_JSON).content("{\"login\": \"priya\"}"))
+        .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("code").asString();
+    String code = JSON.readTree(mvc.perform(authed(post("/api/account/reset-codes"))
+            .contentType(MediaType.APPLICATION_JSON).content("{\"login\": \"priya\"}"))
+        .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString()).get("code").asString();
+
+    mvc.perform(post("/api/auth/reset").contentType(MediaType.APPLICATION_JSON)
+            .content(JSON.writeValueAsString(Map.of("code", first, "password", "priya-new-pass"))))
+        .andExpect(status().isForbidden());
+    mvc.perform(post("/api/auth/reset").contentType(MediaType.APPLICATION_JSON)
+            .content(JSON.writeValueAsString(Map.of("code", code, "password", "priya-new-pass"))))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.login").value("priya"));
+    mvc.perform(get("/api/auth/me").cookie(priya)).andExpect(status().isUnauthorized());
+    signIn("priya", "priya-new-pass");
+    signIn("siddhant", "test-password");
   }
 
   @Test

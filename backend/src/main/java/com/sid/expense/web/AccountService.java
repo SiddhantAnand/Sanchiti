@@ -31,8 +31,14 @@ public class AccountService {
   // BCrypt only reads the first 72 bytes.
   private static final int MAX_PASSWORD = 64;
   private static final Duration INVITE_TTL = Duration.ofDays(7);
+  private static final Duration CONSOLE_RESET_TTL = Duration.ofMinutes(30);
+  private static final Duration ADMIN_RESET_TTL = Duration.ofDays(1);
+  // Stops the public "forgot password" form from flooding the log or replacing a code someone is about to use.
+  private static final Duration CONSOLE_RESET_INTERVAL = Duration.ofMinutes(1);
 
   public record Invite(String code, OffsetDateTime expiresAt) {}
+
+  public record ResetCode(String code, OffsetDateTime expiresAt) {}
 
   private final UserRepository users;
   private final AppProperties props;
@@ -100,6 +106,47 @@ public class AccountService {
       throw new ApiException(HttpStatus.BAD_REQUEST, "Current password is incorrect");
     }
     users.setPassword(user.id(), encoder.encode(validPassword(next)));
+  }
+
+  /**
+   * "Forgot password": writes a one-time reset code to the server log, which only whoever runs the server can read.
+   * Says nothing to the caller, so the form can't be used to find out which login IDs exist.
+   */
+  public void requestReset(String login) {
+    String l = normalizeLogin(login);
+    if (!LOGIN.matcher(l).matches()) return;
+    Optional<User> user = users.findByLogin(l);
+    if (user.isEmpty()) {
+      log.info("Password reset requested for unknown login ID '{}'", l);
+      return;
+    }
+    String code = randomToken();
+    OffsetDateTime expiresAt = OffsetDateTime.now().plus(CONSOLE_RESET_TTL);
+    if (users.createReset(user.get().id(), TransactionService.sha256(code), expiresAt, CONSOLE_RESET_INTERVAL)) {
+      log.warn("Password reset code for '{}' (works once, until {}): {}", l, expiresAt, code);
+    } else {
+      log.info("Password reset for '{}' asked again within {}; the earlier code still works", l, CONSOLE_RESET_INTERVAL);
+    }
+  }
+
+  /** An admin's reset code for someone who forgot their password; any earlier code for them stops working. */
+  public ResetCode newResetCode(String login) {
+    User user = users.findByLogin(normalizeLogin(login))
+        .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No account with that login ID"));
+    String code = randomToken();
+    OffsetDateTime expiresAt = OffsetDateTime.now().plus(ADMIN_RESET_TTL);
+    users.createReset(user.id(), TransactionService.sha256(code), expiresAt, Duration.ZERO);
+    return new ResetCode(code, expiresAt);
+  }
+
+  /** Sets a new password with a reset code and returns the account; the code works once. */
+  @Transactional
+  public User resetPassword(String code, String password) {
+    String hash = encoder.encode(validPassword(password));
+    long userId = (code == null ? Optional.<Long>empty() : users.useReset(TransactionService.sha256(code.trim())))
+        .orElseThrow(() -> new ApiException(HttpStatus.FORBIDDEN, "Reset code is invalid, used or expired"));
+    users.setPassword(userId, hash);
+    return users.findById(userId).orElseThrow();
   }
 
   /** Returns the new key; the old key stops working. */

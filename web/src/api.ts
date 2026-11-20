@@ -162,10 +162,14 @@ export const api = {
   signup: (p: { invite: string; login: string; name: string; password: string }) =>
     request<Me>('POST', '/api/auth/signup', p),
   logout: () => request<void>('POST', '/api/auth/logout'),
+  forgotPassword: (login: string) => request<void>('POST', '/api/auth/forgot', { login }),
+  resetPassword: (code: string, password: string) => request<Me>('POST', '/api/auth/reset', { code, password }),
   phoneKey: () => request<{ phoneKey: string | null }>('GET', '/api/account/phone-key'),
   newPhoneKey: () => request<{ phoneKey: string }>('POST', '/api/account/phone-key'),
   changePassword: (current: string, next: string) => request<void>('POST', '/api/account/password', { current, next }),
   createInvite: () => request<{ code: string; expiresAt: string }>('POST', '/api/account/invites'),
+  createResetCode: (login: string) =>
+    request<{ code: string; expiresAt: string }>('POST', '/api/account/reset-codes', { login }),
   users: () => request<{ users: UserRow[] }>('GET', '/api/account/users'),
   aiStatus: () => request<AiStatus>('GET', '/api/account/ai'),
   saveAi: (apiKey: string, model: string) => request<AiStatus>('PUT', '/api/account/ai', { apiKey, model }),

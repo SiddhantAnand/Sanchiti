@@ -219,6 +219,7 @@ function People() {
   const toast = useToast();
   const [users, setUsers] = useState<UserRow[] | null>(null);
   const [invite, setInvite] = useState<{ link: string; expiresAt: string } | null>(null);
+  const [reset, setReset] = useState<{ login: string; link: string; expiresAt: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -230,6 +231,18 @@ function People() {
     try {
       const { code, expiresAt } = await api.createInvite();
       setInvite({ link: `${window.location.origin}/#/signup?invite=${encodeURIComponent(code)}`, expiresAt });
+    } catch (e) {
+      toast('err', (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createReset(login: string) {
+    setBusy(true);
+    try {
+      const { code, expiresAt } = await api.createResetCode(login);
+      setReset({ login, link: `${window.location.origin}/#/reset?code=${encodeURIComponent(code)}`, expiresAt });
     } catch (e) {
       toast('err', (e as Error).message);
     } finally {
@@ -259,6 +272,16 @@ function People() {
             </div>
           </>
         )}
+        {reset && (
+          <>
+            <CopyField label={`Password reset link for @${reset.login}`} value={reset.link} secret />
+            <div className="alert alert-amber">
+              <KeyRound size={16} />
+              <span>Works once, until {new Date(reset.expiresAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}.
+                Send it privately; whoever opens it can choose a new password for @{reset.login}.</span>
+            </div>
+          </>
+        )}
         <div className="mini-list">
           {(users ?? []).map((u) => (
             <div className="mini-row" key={u.login}>
@@ -267,6 +290,10 @@ function People() {
               <span className="faint" style={{ fontSize: 12 }}>
                 joined {new Date(u.createdAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
               </span>
+              <button className="btn btn-sm" disabled={busy} onClick={() => createReset(u.login)}
+                title="A one-time link to choose a new password">
+                <KeyRound size={14} /> Reset link
+              </button>
             </div>
           ))}
         </div>

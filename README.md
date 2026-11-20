@@ -49,6 +49,18 @@ Two containers plus Postgres. Images are published to GHCR on every push to `mai
 [.github/workflows/ci.yml](.github/workflows/ci.yml): tests on every push/PR; on `main` it publishes both images and
 calls the host's deploy hooks if the repository secrets `DEPLOY_HOOK_API` / `DEPLOY_HOOK_WEB` are set.
 
+## Forgotten password
+
+Passwords are stored only as BCrypt hashes, so they can't be looked up — only reset.
+
+- **Sign-in page → Forgot password?** Enter the login ID; a one-time reset code (valid 30 minutes) is written to the
+  API's log (look for `Password reset code for '<login>'`), e.g. `docker compose logs api` or the host's log viewer.
+  Enter it on the same page with a new password. The response never reveals whether a login ID exists.
+- **Admins: Settings → People → Reset link** gives a one-time link (valid 1 day) to send to someone who has no
+  access to the server log.
+
+Resetting signs the account out of every other browser.
+
 ## Backups
 
 Settings → **Download my data** gives each user a JSON file with all their own rows (no passwords or keys).

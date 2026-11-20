@@ -77,6 +77,22 @@ public class AuthController {
     return signedIn(users.findByLogin(AccountService.normalizeLogin(login)).orElseThrow(), req);
   }
 
+  /** Always 202, whether or not the login ID exists; the reset code goes to the server log. */
+  @PostMapping("/forgot")
+  public ResponseEntity<Void> forgot(@RequestBody Map<String, Object> body) {
+    accounts.requestReset(text(body.get("login")));
+    return ResponseEntity.accepted().build();
+  }
+
+  /** Sets a new password with a reset code, signs out every other browser and signs this one in. */
+  @PostMapping("/reset")
+  public ResponseEntity<Me> reset(@RequestBody Map<String, Object> body, HttpServletRequest req) {
+    User user = accounts.resetPassword(text(body.get("code")), text(body.get("password")));
+    sessions.deleteAll(user.id());
+    failures.remove(user.login());
+    return signedIn(user, req);
+  }
+
   @PostMapping("/logout")
   public ResponseEntity<Void> logout(HttpServletRequest req) {
     ApiGuardFilter.sessionToken(req).ifPresent(t -> sessions.delete(TransactionService.sha256(t)));

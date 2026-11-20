@@ -25,6 +25,10 @@ public class SessionRepository {
     jdbc.sql("DELETE FROM sessions WHERE token_hash = ?").param(tokenHash).update();
   }
 
+  public void deleteAll(long userId) {
+    jdbc.sql("DELETE FROM sessions WHERE user_id = ?").param(userId).update();
+  }
+
   /** Signs the user out everywhere except the given session. */
   public void deleteOthers(long userId, String keepTokenHash) {
     jdbc.sql("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?").params(userId, keepTokenHash).update();

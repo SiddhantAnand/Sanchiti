@@ -119,6 +119,15 @@ public class AccountController {
     return ResponseEntity.status(HttpStatus.CREATED).body(accounts.newInvite(user.id()));
   }
 
+  /** A one-time code someone can use on the sign-in page ("Forgot password?") to choose a new password. */
+  @PostMapping("/reset-codes")
+  public ResponseEntity<AccountService.ResetCode> resetCode(
+      @RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user, @RequestBody Map<String, Object> body) {
+    requireAdmin(user);
+    String login = body.get("login") instanceof String s ? s : null;
+    return ResponseEntity.status(HttpStatus.CREATED).body(accounts.newResetCode(login));
+  }
+
   @GetMapping("/users")
   public UserList users(@RequestAttribute(AuthUser.ATTRIBUTE) AuthUser user) {
     requireAdmin(user);

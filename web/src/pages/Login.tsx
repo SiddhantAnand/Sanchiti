@@ -1,44 +1,76 @@
 import { useState, type FormEvent } from 'react';
-import { AtSign, CircleAlert, Eye, EyeOff, KeyRound, Lock, LoaderCircle, ShieldCheck, Sparkles, User, Utensils, ShoppingBag, Car } from 'lucide-react';
+import { AtSign, CircleAlert, Eye, EyeOff, Info, KeyRound, Lock, LoaderCircle, ShieldCheck, Sparkles, User, Utensils, ShoppingBag, Car } from 'lucide-react';
 import { api, type Me } from '../api';
 
-// An admin's invite link looks like /#/signup?invite=CODE.
-function inviteFromLink() {
+// An admin's invite link looks like /#/signup?invite=CODE, and a password reset link like /#/reset?code=CODE.
+function codeFromLink(page: string, param: string) {
   const [path, query] = window.location.hash.replace(/^#\/?/, '').split('?');
-  return path === 'signup' ? new URLSearchParams(query).get('invite') ?? '' : null;
+  return path === page ? new URLSearchParams(query).get(param) ?? '' : null;
 }
 
+type Mode = 'in' | 'up' | 'forgot';
+
+const TITLES: Record<Mode, [string, string]> = {
+  in: ['Welcome back', 'Sign in to review your spending.'],
+  up: ['Create your account', 'You need an invite code from the admin.'],
+  forgot: ['Reset your password', 'Get a one-time reset code, then choose a new password.'],
+};
+
 export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
-  const linkInvite = inviteFromLink();
-  const [mode, setMode] = useState<'in' | 'up'>(linkInvite === null ? 'in' : 'up');
+  const linkInvite = codeFromLink('signup', 'invite');
+  const linkReset = codeFromLink('reset', 'code');
+  const [mode, setMode] = useState<Mode>(linkReset !== null ? 'forgot' : linkInvite !== null ? 'up' : 'in');
   const [invite, setInvite] = useState(linkInvite ?? '');
+  const [resetCode, setResetCode] = useState(linkReset ?? '');
+  // Forgot password: false while asking for the login ID, true once the code can be entered.
+  const [haveCode, setHaveCode] = useState(linkReset !== null);
+  const [codeRequested, setCodeRequested] = useState(false);
   const [login, setLogin] = useState('');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const choosingPassword = mode === 'up' || (mode === 'forgot' && haveCode);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
+    if (mode === 'forgot' && haveCode && password !== confirm) {
+      setError("The new passwords don't match");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
+      if (mode === 'forgot' && !haveCode) {
+        await api.forgotPassword(login);
+        setCodeRequested(true);
+        setHaveCode(true);
+        return;
+      }
       const me = mode === 'in'
         ? await api.login(login, password)
-        : await api.signup({ invite: invite.trim(), login, name, password });
-      if (mode === 'up') window.location.hash = '/overview';
+        : mode === 'up'
+          ? await api.signup({ invite: invite.trim(), login, name, password })
+          : await api.resetPassword(resetCode.trim(), password);
+      if (mode !== 'in') window.location.hash = '/overview';
       onSignedIn(me);
     } catch (err) {
       setError((err as Error).message);
       setPassword('');
+      setConfirm('');
     } finally {
       setBusy(false);
     }
   }
 
-  function switchMode() {
-    setMode((m) => (m === 'in' ? 'up' : 'in'));
+  function switchMode(next: Mode) {
+    setMode(next);
+    setHaveCode(false);
+    setCodeRequested(false);
+    setPassword('');
+    setConfirm('');
     setError(null);
   }
 
@@ -99,12 +131,18 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
 
       <section className="login-panel">
         <div className="login-box">
-          <h2>{mode === 'in' ? 'Welcome back' : 'Create your account'}</h2>
-          <p className="muted" style={{ margin: 0 }}>
-            {mode === 'in' ? 'Sign in to review your spending.' : 'You need an invite code from the admin.'}
-          </p>
+          <h2>{TITLES[mode][0]}</h2>
+          <p className="muted" style={{ margin: 0 }}>{TITLES[mode][1]}</p>
           <form onSubmit={submit}>
             {error && <div className="alert"><CircleAlert size={16} /><span>{error}</span></div>}
+            {codeRequested && (
+              <div className="alert alert-amber">
+                <Info size={16} />
+                <span>If <b>@{login.trim().toLowerCase()}</b> has an account, a one-time reset code (valid 30 minutes) is now
+                  in the server log: look for “Password reset code”. Not running the server yourself? Ask your admin for a
+                  reset link from Settings → People.</span>
+              </div>
+            )}
             {mode === 'up' && (
               <label className="field">
                 <span>Invite code</span>
@@ -115,16 +153,29 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
                 </div>
               </label>
             )}
-            <label className="field">
-              <span>Login ID</span>
-              <div className="input-icon">
-                <AtSign size={16} />
-                <input className="input" style={{ height: 46 }} autoComplete="username" required
-                  placeholder={mode === 'up' ? 'e.g. priya.k (3-32 letters, digits, . _ -)' : 'Your login ID'}
-                  autoCapitalize="none" spellCheck={false}
-                  value={login} onChange={(e) => setLogin(e.target.value)} autoFocus={mode === 'in' || !!invite} />
-              </div>
-            </label>
+            {mode === 'forgot' && haveCode && (
+              <label className="field">
+                <span>Reset code</span>
+                <div className="input-icon">
+                  <KeyRound size={16} />
+                  <input className="input" style={{ height: 46 }} autoComplete="one-time-code" required
+                    autoCapitalize="none" spellCheck={false}
+                    value={resetCode} onChange={(e) => setResetCode(e.target.value)} autoFocus={!resetCode} />
+                </div>
+              </label>
+            )}
+            {!(mode === 'forgot' && haveCode) && (
+              <label className="field">
+                <span>Login ID</span>
+                <div className="input-icon">
+                  <AtSign size={16} />
+                  <input className="input" style={{ height: 46 }} autoComplete="username" required
+                    placeholder={mode === 'up' ? 'e.g. priya.k (3-32 letters, digits, . _ -)' : 'Your login ID'}
+                    autoCapitalize="none" spellCheck={false}
+                    value={login} onChange={(e) => setLogin(e.target.value)} autoFocus={mode !== 'up' || !!invite} />
+                </div>
+              </label>
+            )}
             {mode === 'up' && (
               <label className="field">
                 <span>Your name</span>
@@ -135,25 +186,48 @@ export function Login({ onSignedIn }: { onSignedIn: (me: Me) => void }) {
                 </div>
               </label>
             )}
-            <label className="field">
-              <span>Password</span>
-              <div className="input-icon">
-                <Lock size={16} />
-                <input className="input" style={{ height: 46, paddingRight: 44 }} type={reveal ? 'text' : 'password'}
-                  autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
-                  minLength={mode === 'up' ? 10 : undefined} maxLength={64}
-                  placeholder={mode === 'up' ? 'At least 10 characters' : undefined}
-                  required value={password} onChange={(e) => setPassword(e.target.value)} />
-                <button type="button" className="icon-btn input-affix" onClick={() => setReveal((r) => !r)} aria-label={reveal ? 'Hide password' : 'Show password'}>
-                  {reveal ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-              </div>
-            </label>
+            {(mode === 'in' || choosingPassword) && (
+              <label className="field">
+                <span>{mode === 'forgot' ? 'New password' : 'Password'}</span>
+                <div className="input-icon">
+                  <Lock size={16} />
+                  <input className="input" style={{ height: 46, paddingRight: 44 }} type={reveal ? 'text' : 'password'}
+                    autoComplete={mode === 'in' ? 'current-password' : 'new-password'}
+                    minLength={choosingPassword ? 10 : undefined} maxLength={64}
+                    placeholder={choosingPassword ? 'At least 10 characters' : undefined}
+                    required value={password} onChange={(e) => setPassword(e.target.value)}
+                    autoFocus={mode === 'forgot' && !!resetCode} />
+                  <button type="button" className="icon-btn input-affix" onClick={() => setReveal((r) => !r)} aria-label={reveal ? 'Hide password' : 'Show password'}>
+                    {reveal ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </label>
+            )}
+            {mode === 'forgot' && haveCode && (
+              <label className="field">
+                <span>Repeat new password</span>
+                <div className="input-icon">
+                  <Lock size={16} />
+                  <input className="input" style={{ height: 46 }} type={reveal ? 'text' : 'password'}
+                    autoComplete="new-password" minLength={10} maxLength={64} required
+                    value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+                </div>
+              </label>
+            )}
             <button className="btn btn-primary btn-lg" disabled={busy}>
-              {busy && <LoaderCircle size={17} className="spinner" />} {mode === 'in' ? 'Sign in' : 'Create account'}
+              {busy && <LoaderCircle size={17} className="spinner" />}{' '}
+              {mode === 'in' ? 'Sign in' : mode === 'up' ? 'Create account' : haveCode ? 'Set new password' : 'Get a reset code'}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={switchMode}>
-              {mode === 'in' ? 'Have an invite? Create an account' : 'Already have an account? Sign in'}
+            {mode === 'in' && (
+              <button type="button" className="btn btn-ghost" onClick={() => switchMode('forgot')}>Forgot password?</button>
+            )}
+            {mode === 'forgot' && !haveCode && (
+              <button type="button" className="btn btn-ghost" onClick={() => (setHaveCode(true), setError(null))}>
+                I already have a reset code
+              </button>
+            )}
+            <button type="button" className="btn btn-ghost" onClick={() => switchMode(mode === 'in' ? 'up' : 'in')}>
+              {mode === 'in' ? 'Have an invite? Create an account' : mode === 'up' ? 'Already have an account? Sign in' : 'Back to sign in'}
             </button>
           </form>
         </div>
